@@ -75,8 +75,9 @@ def _run_probe(extra_env, fonts_dir):
                PYTHONPATH=os.pathsep.join([str(ROOT / "src")] + [p for p in sys.path if p]))
     env.pop("PYTHONIOENCODING", None)
     env.update(extra_env)
-    # -X warn_default_encoding + warnings-as-errors in the probe: any I/O that silently falls
-    # back to the default encoding raises, even where the default happens to be UTF-8
+    # -X warn_default_encoding (Python 3.10+): any implicit default-encoding use in PATT-PDF
+    # code is reported by the probe with file and line and fails it (exit 2), even where the
+    # default happens to be UTF-8. Warnings from the standard library are listed, not failed.
     r = subprocess.run([sys.executable, "-X", "warn_default_encoding", str(PROBE)], capture_output=True,
                        env=env, timeout=300)
     out = (r.stdout + r.stderr).decode("ascii", "backslashreplace")
@@ -120,9 +121,55 @@ def test_pipeline_in_legacy_posix_locales(fonts_ready):
         assert rc == 0 and "OK" in out, f"[{name}] " + out[-3000:]
 
 
+def test_probe_detects_implicit_encoding_in_project_code(fonts_ready, monkeypatch, tmp_path):
+    """The probe must still catch the review's original defect (no more 'green by deletion')."""
+    import shutil as _sh
+    root = tmp_path / "proj"
+    _sh.copytree(ROOT / "src", root / "src"); _sh.copytree(ROOT / "tests" / "fixtures", root / "tests" / "fixtures")
+    mf = root / "tests" / "fixtures" / "make_fixtures.py"
+    t = mf.read_text(encoding="utf-8")
+    bad = t.replace('json.loads(Path(path).read_text(encoding="utf-8"))', 'json.loads(Path(path).read_text())')
+    assert bad != t
+    mf.write_text(bad, encoding="utf-8")
+    env = dict(os.environ, PYTHONUTF8="0", PATT_PDF_FONT_DIR=str(fonts_ready),
+               PYTHONPATH=os.pathsep.join([str(root / "src")] + [p for p in sys.path
+                                                                if p and Path(p).resolve() != (ROOT / "src").resolve()]))
+    r = subprocess.run([sys.executable, "-X", "warn_default_encoding", str(root / "tests" / "fixtures" / "encoding_probe.py")],
+                       capture_output=True, env=env, timeout=300)
+    out = (r.stdout + r.stderr).decode("ascii", "backslashreplace")
+    # detected either by the warning report (names the file) or, where the default encoding cannot
+    # decode the data, by the content check that runs first; both mean the defect is caught
+    assert r.returncode != 0 and ("make_fixtures.py" in out or "decoded wrongly" in out), out[-2000:]
+
+
+def test_stdlib_encoding_warning_does_not_abort_probe(fonts_ready):
+    """W01 / macOS: on Python 3.11+ locale.getpreferredencoding() itself warns. Simulated here on
+    every Python version with a sitecustomize helper; the probe must still run the pipeline."""
+    helper = ROOT / "tests" / "fixtures" / "py311_locale_warning"
+    rc, out = _run_probe({"PYTHONPATH": os.pathsep.join([str(helper), str(ROOT / "src")] + [p for p in sys.path if p])},
+                         fonts_ready)
+    assert rc == 0 and "OK" in out, out[-3000:]
+    assert "locale.py" in out                                   # the stdlib warning is reported, not hidden
+
+
+def test_probe_does_not_fail_on_stdlib_warnings(monkeypatch):
+    """A warning raised inside the standard library (e.g. locale) is listed, not failed."""
+    sys.path.insert(0, str(PROBE.parent))
+    try:
+        import importlib
+        probe = importlib.import_module("encoding_probe")
+        assert probe._own(str(ROOT / "src" / "patt_pdf" / "jobs.py"))
+        assert probe._own(str(PROBE))
+        assert not probe._own(locale.__file__)
+    finally:
+        sys.path.remove(str(PROBE.parent))
+
+
 def test_current_default_encoding_is_reported():
     """Not an assertion about correctness: records what the platform default is in -rA output."""
-    print("default text encoding:", locale.getpreferredencoding(False), "utf8_mode:", sys.flags.utf8_mode)
+    getenc = getattr(locale, "getencoding", None)      # 3.11+: does not emit EncodingWarning
+    print("default text encoding:", getenc() if getenc else locale.getpreferredencoding(False),
+          "utf8_mode:", sys.flags.utf8_mode)
 
 
 def test_undecodable_file_names_do_not_crash_state_writes(tmp_path):

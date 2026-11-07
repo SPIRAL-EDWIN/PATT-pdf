@@ -15,7 +15,11 @@ sys.path.insert(0, str(HERE / "fixtures"))
 sys.path.insert(0, str(HERE))
 import make_fixtures  # noqa: E402
 
-HAS_TESSERACT = shutil.which("tesseract") is not None
+sys.path.insert(0, str(HERE.parent / "src"))
+from patt_pdf.osenv import find_tesseract  # noqa: E402
+
+# same discovery as the product: PATT_PDF_TESSERACT, PATH, OS default install folders
+HAS_TESSERACT = find_tesseract()[0] is not None
 HAS_CV2 = importlib.util.find_spec("cv2") is not None
 HAS_OCR = HAS_TESSERACT and HAS_CV2
 needs_ocr = pytest.mark.skipif(not HAS_OCR, reason="tesseract CLI and opencv required")

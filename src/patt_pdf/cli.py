@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,7 +36,9 @@ def _ws(a):
 def _files(ws, a):
     fs = ws.sources(getattr(a, "files", None))
     if not fs:
-        raise SystemExit(f"error: no PDF files found in {a.src}")
+        from .osenv import long_path_problem
+        hint = long_path_problem(os.path.abspath(a.src))
+        raise SystemExit(f"error: no PDF files found in {a.src}" + (f" ({hint})" if hint else ""))
     return fs
 
 
@@ -104,16 +107,31 @@ def cmd_translate(a):
         if not (s["outcome"] == "refused" and s["stopped"] and s["stopped"].startswith("plans missing")) else EXIT_ERROR
 
 
+_RENDER_HINTS = {
+    "file_in_use_or_read_only": "  -> close the output PDF in your viewer (or check permissions), then run render again;"
+                                " the previous output was kept unchanged",
+    "ocr_unavailable": "  -> install Tesseract or set PATT_PDF_TESSERACT; `patt-pdf doctor` shows what was found",
+    "fonts_missing": "  -> run `patt-pdf fonts`; `patt-pdf doctor` shows the searched folders",
+    "stale_plan": "  -> run `patt-pdf plan` again",
+    "unreadable_input": "  -> repair, decrypt or remove the file, or leave it out with --files",
+}
+
+
 def cmd_render(a):
     from .jobs import render_file
     ws = _ws(a); ns, publishable = _ns(a)
     statuses = []
     for rel in _files(ws, a):
         qa = render_file(ws, rel, ns, publishable=publishable, ocr_qa=not a.no_ocr_qa)
-        flagged = [f"p{p['page']}:{p['status']}" for p in qa.get("pages", []) if p.get("status") != "pass"]
-        detail = qa.get("error", "") if qa["status"] == "error" else " ".join(flagged)
-        print(f"{qa['status'].upper():10s} {rel}  {detail}")
-        statuses.append(qa["status"])
+        st = qa.get("status", "error")
+        flagged = [f"p{p.get('page', '?')}:{p.get('status', 'error')}" for p in qa.get("pages", [])
+                   if p.get("status") != "pass"]
+        if st == "error":
+            detail = qa.get("error", "") + _RENDER_HINTS.get(qa.get("error_kind", ""), "")
+        else:
+            detail = " ".join(flagged)
+        print(f"{st.upper():10s} {rel}  {detail}")
+        statuses.append(st)
     if "error" in statuses:
         return EXIT_ERROR
     if any(s in ("fail", "unverified") for s in statuses):
@@ -187,6 +205,44 @@ def cmd_fonts(a):
         print(f"{k}: {v}")
     print(f"font directory: {font_dir()}")
     return EXIT_ERROR if any(v.startswith(("MISSING", "FAILED")) for v in rep.values()) else EXIT_OK
+
+
+def cmd_doctor(a):
+    """Read-only environment report: platform, encodings, fonts, OCR. Changes nothing."""
+    from . import __version__
+    from .fonts import FACES, find_system_source, font_dir, search_dirs
+    from .osenv import find_tesseract, install_warnings, platform_info, redact
+    info = platform_info()
+    home = os.path.expanduser("~")
+
+    def show(p):
+        return redact(str(p), {"~": home})
+    rc = EXIT_OK
+    print(f"patt-pdf {__version__}")
+    for k in ("os", "machine", "python", "implementation", "locale_encoding", "filesystem_encoding",
+              "utf8_mode", "stdout_encoding", "windows_long_paths_enabled"):
+        print(f"  {k:28s} {info.get(k)}")
+    fd = font_dir()
+    ready = [f for f in FACES.values() if (fd / f).exists()]
+    print(f"fonts: {len(ready)}/4 ready in {show(fd)}")
+    if len(ready) < 4:
+        rc = EXIT_INCOMPLETE
+        for key, name in FACES.items():
+            if name not in ready:
+                src = find_system_source(key)
+                print(f"  {name:24s} {'source: ' + show(src) if src else 'no source found'}")
+        print("  search order: " + " | ".join(show(d) for d in search_dirs()))
+        print("  fix: install Noto Sans/Serif CJK SC (OFL 1.1) or set PATT_PDF_FONT_SOURCE, then `patt-pdf fonts`")
+    exe, how = find_tesseract()
+    if exe:
+        print(f"tesseract: {show(exe)} (via {how})")
+    else:
+        print(f"tesseract: not available ({how}); scanned and outlined pages will be FAIL/page_not_processed")
+    import importlib.util
+    print("opencv: available" if importlib.util.find_spec("cv2") else "opencv: missing (pip install 'patt-pdf[ocr]')")
+    for w in install_warnings(info=info):
+        print("warning: " + w); rc = max(rc, EXIT_INCOMPLETE)
+    return rc
 
 
 def build_parser():
@@ -263,6 +319,9 @@ def build_parser():
 
     p = sub.add_parser("fonts", help="install CJK fonts from system Noto CJK (or PATT_PDF_FONT_SOURCE)")
     p.set_defaults(fn=cmd_fonts)
+
+    p = sub.add_parser("doctor", help="read-only report: OS/CPU, encodings, fonts, Tesseract, install hazards")
+    p.set_defaults(fn=cmd_doctor)
     return ap
 
 

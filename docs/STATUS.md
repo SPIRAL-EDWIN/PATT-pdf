@@ -1,7 +1,36 @@
-# Status of v0.3.1.dev0 (2026-11-07): experimental, public test candidate
+# Status of v0.3.2.dev0 (2026-11-07): experimental, cross-platform test candidate
 
-**Verified:** only on Linux aarch64, with synthetic PDFs and offline backends.
-**Not verified:** macOS, Windows, real-world PDFs and real DeepL calls. Linux runs that *simulate* Windows code pages are not Windows results.
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues from 0.3.1 and is `0.3.2.dev0` (a development pre-release, not a stable release).
+
+**Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends.
+**Real-system evidence:** the macOS and Windows reports below were produced on **v0.3.1.dev0** (`6b969b8`). v0.3.2 has **not** been re-run on macOS or Windows.
+**Not verified:** real-world PDFs, real DeepL calls, cp936/cp1252 Windows systems, Preview/Acrobat interaction, CI (written, not run).
+
+## 0. Findings of the macOS and Windows runs of `6b969b8` (v0.3.1.dev0)
+
+Sources: reviewer reports for macOS 27.2 arm64 (Python 3.11.16, no Tesseract) and Windows 11 x64 (Python 3.12.10, Tesseract 5.5.3, ACP 65001). Each item was re-checked against the logs and reproduced here where the environment allowed.
+
+| ID | Report | Root cause (evidence) | Status in v0.3.2 | Tests |
+|---|---|---|---|---|
+| W03 / macOS P1 | `render` stops the batch with `KeyError: 'status'` without Tesseract, and when the output PDF is locked | **Same root cause on both systems, platform-independent.** After a page was appended to the QA without `status`, the post-render OCR residual check raised `OCRUnavailable` (no Tesseract) or `replace_file` raised `PermissionError` (lock). The file's except block set only the file status; `cli.cmd_render` then indexed `p['status']`. Reproduced on Linux by hiding Tesseract | **Fixed.** OCR missing for the residual check → `residual_check_skipped` (`unverified`) on that page; pages that could not be OCR'd at plan time stay `fail` (`page_not_processed`). Never `pass`. Every page always has a status. File errors get an `error_kind`, and the CLI prints an actionable hint. `replace_file` retries briefly, and its message names only the file. The batch continues | `tests/test_error_paths.py` (OCR missing at plan or render time, simulated lock, unexpected exception, schema guard; native Windows lock test runs only on Windows) |
+| W01 / macOS | Encoding probe fails before the pipeline: `EncodingWarning` from `locale.getpreferredencoding()` | **Test design.** The probe turned *all* EncodingWarnings into errors and itself called `locale.getpreferredencoding()`, which warns on Python ≥ 3.11 (`-X warn_default_encoding`). Python 3.10 does not warn, so the Linux runs passed. Not a data-decoding defect | **Fixed in the test, detection kept.** The probe records each EncodingWarning with its source file and fails only on warnings from PATT-PDF code (exit 2), listing stdlib/third-party ones. It uses `locale.getencoding()` where available | `test_stdlib_encoding_warning_does_not_abort_probe` (simulates 3.11 on any version), `test_probe_detects_implicit_encoding_in_project_code` (the original defect still fails the probe) |
+| macOS editable import | `ModuleNotFoundError: patt_pdf` with `LC_ALL=en_US.ISO8859-1 PYTHONUTF8=0`, source in a Chinese-named folder, editable install | **CPython behaviour, not PATT-PDF code.** `site.addpackage` reads `.pth` files with `encoding="locale"`. setuptools writes the editable `.pth` (containing the non-ASCII source path) as UTF-8, so under ISO8859-1 the path is mis-decoded and not found. Reproduced with a UTF-8 `.pth` under CP1252 (wrong path) and GBK (`UnicodeDecodeError`); `PYTHONUTF8=1` fixes both. **Not the same root cause as W01** | **Documented and diagnosed, not "fixed".** `patt-pdf doctor` warns. README recommends a regular install, an ASCII-only folder or `PYTHONUTF8=1`. CI installs non-editable. The macOS setuptools version was not recorded; confirmation on macOS is pending | `test_pth_with_non_ascii_path_is_decoded_with_locale_encoding`, `test_editable_install_warning_for_non_ascii_source_and_legacy_locale` |
+| W02 | Escaped Windows absolute path in `truncated.pdf.error.json` and the report | The old redaction replaced the literal root string only. PyMuPDF quotes the path with backslashes, which JSON then doubles | **Fixed.** `osenv.redact` normalises raw, escaped, `/`, `\\?\` and UNC Windows paths and POSIX home paths. Paths under the input or state folder keep their relative part (`<input>/sub/a.pdf`); others become `<path>/name` | `tests/test_osenv.py` (12 message shapes, injected Windows message end-to-end; on Windows itself still to be re-run) |
+| W04 | `C:\Windows\Fonts` searched before the user font folder, and listed twice; POSIX folders listed on Windows | The README promised env → user → system, but the code listed a fixed cross-OS list containing `C:/Windows/Fonts`, then appended the Windows folders | **Fixed.** `osenv.font_search_dirs` gives, per OS, env → user → system, de-duplicated, with no other OS's folders. Verified by the actual file hit with the same file name in both folders | `test_windows_font_order_…`, `test_same_font_in_user_and_system_folder_user_wins`, `test_env_source_beats_user_and_system` |
+| W05 | 307-character path: `no PDF files found` with `LongPathsEnabled=0`; pip's temp path too long | Windows MAX_PATH; not engine logic. Extended paths worked in the reviewer's run | **Diagnosed, not bypassed.** `osenv.long_path_problem` explains the cause in the "no PDF files found" error and in `doctor`. The docs advise short folders; the registry is not changed. Extended paths are mentioned as "worked in one test", not as supported. Long paths during pip installs remain an environment limit | `test_long_path_diagnosis_only_when_it_applies`, `test_no_pdfs_found_explains_long_path` |
+| OCR detection in tests | `conftest.py` looked only at `PATH`, while the product also uses `PATT_PDF_TESSERACT` and the Windows default folders | — | **Fixed.** conftest uses `osenv.find_tesseract`, the same function as the product. An override that points to a missing file is reported, never silently replaced | `test_conftest_uses_product_detection`, `test_tesseract_order_and_explicit_override_is_not_replaced` |
+| Not reproduced as defects | macOS without fonts: 64 passed, 60 skipped (expected: font-dependent tests skip); budget, isolation, stale plan, damaged files, cross-drive state, resume, links, ACL: **passed** on the reviewers' systems | — | unchanged | — |
+
+**Mutations this round:** each fix was reverted on purpose, and the targeted tests failed every time:
+
+- M19: OCR error not caught.
+- M20: no page status, together with the old CLI line.
+- M21: no lock hint.
+- M22: old literal path redaction.
+- M23: Windows system fonts before user fonts.
+- M24: no long-path hint.
+- M25: missing override silently replaced.
+- The probe set back to "error on every EncodingWarning".
 
 ## 1. Findings of the Windows-acceptance review (on candidate `93ee393`), reproduced and fixed
 
@@ -73,27 +102,40 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 **Not detected:** other visual relations to moved text, such as boxes, arrows, callouts or highlights drawn as filled shapes behind words. Double underlines whose two lines are more than 0.45 × font size below the baseline are also missed. And a bottom border that hugs the text without touching any vertical line could be mistaken for an underline and shortened (shown in `compare` output). Rendering checks cannot prove that a page *looks* right; use `patt-pdf compare`.
 
-## 4. Test results (this platform only)
+## 4. Test results
 
-* **Platform:** Linux aarch64 (container), Python 3.10.12, numpy 2.2.6, fontTools 4.65.0, opencv-python-headless 5.0.0.93, Pillow 12.3.0, pytest 9.2.0, pyflakes 4.0.3, Tesseract 4.1.1 (eng). 124 tests.
+### v0.3.2.dev0, this environment (Linux aarch64 container, Python 3.10.12)
 
-| Run | Result |
+Dependencies: numpy 2.2.6, fontTools 4.65.0, opencv-python-headless 5.0.0.93, Pillow 12.3.0, pytest 9.2.0, pyflakes 4.0.3, Tesseract 4.1.1 (eng). The suite has 161 tests. `pyflakes src tests`: clean.
+
+| Run | Result | Skips (reason) |
+|---|---|---|
+| PyMuPDF 1.28.2, C.UTF-8, Tesseract, GBK/CP1252 locales generated | 160 passed, 1 skipped | native Windows lock |
+| same, Tesseract hidden | 155 passed, 6 skipped | 5 × OCR, 1 × Windows lock |
+| `LC_ALL=zh_CN.GBK PYTHONUTF8=0` | 157 passed, 4 skipped | 2 × non-ASCII file names need a UTF-8 file system encoding on POSIX; 1 × `.pth` simulation needs a UTF-8 parent; 1 × Windows lock |
+| `LC_ALL=en_US.CP1252 PYTHONUTF8=0` | 157 passed, 4 skipped | same |
+| no legacy locales installed | 158 passed, 3 skipped | locale simulations, Windows lock |
+| PyMuPDF 1.25.2 | 160 passed, 1 skipped | Windows lock |
+| no CJK fonts | 93 passed, 68 skipped | font-dependent tests |
+
+Python 3.11–3.13 could **not** be installed here (no network in this environment). The W01 fix is tested by simulating the 3.11 warning; it has not run on a real 3.11/3.12.
+
+### v0.3.1.dev0 on real systems (reviewers, before these fixes)
+
+| System | Result |
 |---|---|
-| PyMuPDF 1.28.2, C.UTF-8, Tesseract, GBK/CP1252 locales generated | 124 passed |
-| same, Tesseract not on PATH | 119 passed, 5 skipped (OCR) |
-| PyMuPDF 1.28.2, `LC_ALL=zh_CN.GBK PYTHONUTF8=0` | 122 passed, 2 skipped (non-ASCII file names need a UTF-8 file system encoding on POSIX) |
-| PyMuPDF 1.28.2, `LC_ALL=en_US.CP1252 PYTHONUTF8=0` | 122 passed, 2 skipped (same reason) |
-| PyMuPDF 1.25.2, C.UTF-8, Tesseract | 124 passed |
+| macOS 27.2 arm64, Python 3.11.16, fonts, no Tesseract | 117 passed, 2 failed (W01), 5 skipped |
+| Windows 11 x64, Python 3.12.10, Tesseract 5.5.3 | 120 passed, 1 failed (W01), 3 skipped |
+| Windows, no Tesseract | 115 passed, 1 failed (W01), 8 skipped |
 
-`pyflakes src tests` is clean. Without generated legacy locales, `test_pipeline_in_legacy_posix_locales` skips. On Windows, 3 tests are POSIX-only by design (see the Windows prompt); no Windows run has happened.
-* **CLI dry run:** the end-to-end sequences in the macOS checklist and the Windows prompt were run as bash on this platform. The path contained Chinese characters and spaces. Every predicted exit code and status matched.
-* **Offline:** no network, no DeepL calls, no API quota used. The DeepL client is exercised with a fake HTTP opener.
-* **Sample output:** `docs/sample/compare_synthetic.jpg` (original | output) and `docs/sample/REPORT_SAMPLE.md`, generated from the synthetic fixtures only.
+### CI
+
+`.github/workflows/tests.yml` defines Linux x64/arm64, macOS arm64/x64 and Windows x64 jobs (Python 3.10–3.13, with and without Tesseract, plus a `PYTHONUTF8=0` encoding run on Windows). It has **never run**; no result can be claimed from it.
 
 ## 5. Not verified
 
-* **macOS:** not run. Checklist: `docs/testing/MACOS_CHECKLIST.md`.
-* **Windows:** not run. Windows-specific code paths are untested: font directories, the `%APPDATA%` key location, the Tesseract default path, file locking, console code pages and the real ANSI code page (cp936/cp1252; only simulated with POSIX locales). Prompt: `docs/testing/WINDOWS_CODEX_PROMPT.md`.
+* **macOS:** v0.3.1 was run by a reviewer without Tesseract (see §0); v0.3.2 not re-run; OCR, Preview locks, cross-volume and signals untested. Checklist: `docs/testing/MACOS_CHECKLIST.md`.
+* **Windows:** v0.3.1 was run by a reviewer (see §0); v0.3.2 not re-run. Still untested: font directories, the `%APPDATA%` key location, the Tesseract default path, file locking, console code pages and the real ANSI code page (cp936/cp1252; only simulated with POSIX locales). Prompt: `docs/testing/WINDOWS_CODEX_PROMPT.md`.
 * **Real DeepL calls through v0.2/v0.3:** none made. The ledger, the meter and the billed-delta reporting have not been checked against the live API.
 * **Real-world PDFs:** the corpus contains only synthetic fixtures (14 files, 12 readable pages), and underline detection has only been tested on synthetic pages.
 * **General OCR accuracy:** two synthetic scans and one outlined page.
@@ -115,7 +157,10 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 7. Compatibility notes
 
-* `ENGINE_VERSION` is now `patt-0.3-e2` (v0.3.1), so existing state directories must be re-planned.
+* `ENGINE_VERSION` is now `patt-0.3-e3` (v0.3.2), so existing state directories must be re-planned.
+* QA files of failed renders gain `error_kind`; error messages use `<input>/…`, `<state>/…`, `<path>/name`.
+* New command `patt-pdf doctor` (read-only).
+* `fonts.SYSTEM_DIRS` is `None` by default (per-OS folders come from `osenv`).
 * New QA issue `source_repaired` (`unverified`).
 * `translate` exits 2 (not 0) when some inputs are unreadable, and 1 when none are readable.
 * Run summaries gained `sent_chars`, `retry_attempts` and `rejected_chars`. `possibly_billed_chars` now comes from the per-attempt meter for DeepL.

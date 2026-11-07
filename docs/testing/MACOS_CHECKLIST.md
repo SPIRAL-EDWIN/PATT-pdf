@@ -1,6 +1,6 @@
 # PATT-PDF macOS verification checklist (for Codex)
 
-**Purpose:** verify the experimental v0.3.1.dev0 candidate on macOS from a clean install.
+**Purpose:** verify the experimental v0.3.2.dev0 candidate on macOS from a clean install. For a retest of the v0.3.1 findings only, use `docs/testing/RETEST_V0.3.2.md` instead.
 The candidate has only been tested on Linux aarch64 so far.
 
 **Reporting:** mark every item PASS / FAIL / SKIP with evidence. Do not mark anything as passed that you did not run.
@@ -56,8 +56,8 @@ Supported Python is 3.10 or newer. If `python3` is older, install Python 3.12 (`
 cd "$T/PATT-pdf"
 python3 -m venv "$T/venv" && source "$T/venv/bin/activate"
 python -m pip install --upgrade pip
-pip install -e ".[ocr,dev]" 2>&1 | tail -3
-patt-pdf --version                       # expect: patt-pdf 0.3.1.dev0
+pip install ".[ocr,dev]" 2>&1 | tail -3          # regular install; an editable install from a non-ASCII folder needs a UTF-8 locale (README)
+patt-pdf --version                       # expect: patt-pdf 0.3.2.dev0
 python -c "import pymupdf, numpy, fontTools, cv2; print(pymupdf.VersionBind, numpy.__version__, fontTools.version, cv2.__version__)"
 ```
 
@@ -79,15 +79,15 @@ cd "$T/PATT-pdf"
 python -m pytest -q -p no:cacheprovider -rs 2>&1 | tee "$T/pytest.txt" | tail -5
 ```
 
-Report the actual numbers. The suite has 124 tests. On macOS:
+Report the actual numbers. The suite has 161 tests. On macOS, by design:
 
-* No test is skipped by design if Tesseract is installed *and* a legacy locale such as `en_US.ISO8859-1` is installed (many macOS systems have one), so 124 passed is possible.
-* `test_pipeline_in_legacy_posix_locales` skips if no non-UTF-8 locale is installed.
+* `test_native_windows_lock` always skips (Windows only).
+* `test_pipeline_in_legacy_posix_locales` and `test_pth_with_non_ascii_path_is_decoded_with_locale_encoding` skip if no non-UTF-8 locale (for example `en_US.ISO8859-1`) is installed.
 * Without Tesseract, 5 more tests skip, with Tesseract/OpenCV/OCR as the reason.
 
 Any other skip reason, or any failure, is a finding. Also run the encoding tests with the default encoding forced off UTF-8 and record the first line:
 ```bash
-python -c "import locale,sys; print(locale.getpreferredencoding(False), sys.flags.utf8_mode, sys.getfilesystemencoding())"
+python -c "import locale,sys; print(getattr(locale,'getencoding',locale.getpreferredencoding)(), sys.flags.utf8_mode, sys.getfilesystemencoding())"
 LC_ALL=en_US.ISO8859-1 PYTHONUTF8=0 python -m pytest -q -p no:cacheprovider -rA tests/test_encoding.py | tail -8
 ```
 

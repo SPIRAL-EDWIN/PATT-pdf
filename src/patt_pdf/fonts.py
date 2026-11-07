@@ -34,9 +34,7 @@ SYSTEM_TTC = {
     ("serif", True): ["NotoSerifCJK-Bold.ttc", "NotoSerifCJKsc-Bold.otf", "NotoSerifSC-Bold.otf",
                       "NotoSerifSC-Bold.ttf", "NotoSerifCJK.ttc"],
 }
-SYSTEM_DIRS = ["/usr/share/fonts/opentype/noto", "/usr/share/fonts/noto-cjk", "/usr/share/fonts/google-noto-cjk",
-               "/Library/Fonts", os.path.expanduser("~/Library/Fonts"), "/opt/homebrew/share/fonts",
-               "C:/Windows/Fonts"]
+SYSTEM_DIRS: list[str] | None = None     # None: per-OS defaults from osenv.font_search_dirs (tests may override)
 
 
 class FontsMissing(RuntimeError):
@@ -67,17 +65,15 @@ def _member_matches(name4: str, family: str, bold: bool) -> bool:
 
 
 def search_dirs() -> list[Path]:
-    """Where `patt-pdf fonts` looks for Noto CJK: $PATT_PDF_FONT_SOURCE (one or more dirs,
-    os.pathsep-separated) first, then common per-OS locations (incl. the Windows user
-    font dir %LOCALAPPDATA%\\Microsoft\\Windows\\Fonts)."""
-    dirs = [Path(x) for x in os.environ.get("PATT_PDF_FONT_SOURCE", "").split(os.pathsep) if x]
-    dirs += [Path(d) for d in SYSTEM_DIRS]
-    if os.name == "nt":
-        la = os.environ.get("LOCALAPPDATA")
-        if la:
-            dirs.append(Path(la) / "Microsoft" / "Windows" / "Fonts")
-        dirs.append(Path(os.environ.get("WINDIR", r"C:\\Windows")) / "Fonts")
-    return dirs
+    """Where `patt-pdf fonts` looks for Noto CJK, in this order and without duplicates:
+    $PATT_PDF_FONT_SOURCE, then the user's own font folders, then the system font folders of
+    the running OS (osenv.font_search_dirs). SYSTEM_DIRS, if set (tests), replaces the
+    OS defaults."""
+    from .osenv import font_search_dirs
+    if SYSTEM_DIRS is not None:
+        dirs = [Path(x) for x in os.environ.get("PATT_PDF_FONT_SOURCE", "").split(os.pathsep) if x]
+        return dirs + [Path(d) for d in SYSTEM_DIRS]
+    return font_search_dirs()
 
 
 def find_system_source(key) -> Path | None:

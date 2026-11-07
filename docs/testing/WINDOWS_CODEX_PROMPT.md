@@ -1,4 +1,6 @@
-# 给 Windows 电脑上 Codex 的完整提示词：PATT-PDF v0.3.1.dev0 Windows 验证
+# 给 Windows 电脑上 Codex 的完整提示词：PATT-PDF v0.3.2.dev0 Windows 验证
+
+> **只复测上一轮发现的问题时，请改用 `docs/testing/RETEST_V0.3.2.md`。**本文件用于完整的从零验证。
 
 > 用法：把本文件全文复制给 Windows 上的 Codex。
 >
@@ -8,7 +10,7 @@
 
 **项目：**PATT-PDF（Position-Aware Translation Toolkit for PDF）是一个实验性工具。它把 PDF 中的英文替换为简体中文，并尽量放在原位置。数字、金额、页码、表格和图形保留原字形，下划线和链接区域随译文移动，最后由 QA 检查结果。
 
-**当前状态：**v0.3.1.dev0，experimental，公开测试候选。
+**当前状态：**v0.3.2.dev0，experimental，跨平台测试候选。上一轮 Windows 实测针对 v0.3.1.dev0，发现的问题（W01–W05）已在本版处理，详见 `docs/STATUS.md` 第 0 节；本版尚未在 Windows 上运行。
 - 测试套件共 124 项。只在 Linux aarch64（Python 3.10、PyMuPDF 1.28.2 与 1.25.2、Tesseract 4.1.1）上运行过，结果见 `docs/STATUS.md` 第 3 节。这些是 Linux 结果，**不代表 Windows 会得到同样的数字**。
 - 上一个候选的独立审查发现：测试代码按系统默认编码读取 UTF-8 文件，在 cp936/cp1252 的 Windows 上会让 `¥9,870` 等字符乱码而误报失败。本版已修复，并新增 `tests/test_encoding.py`；在 Linux 上用 GBK 与 CP1252 区域设置模拟过，**未在真实 Windows 上运行**。
 - **从未在 Windows 上运行过**，也没有进行过真实的 DeepL 调用。
@@ -76,8 +78,8 @@ py -3.12 -m venv "$T\venv"      # 或 python -m venv "$T\venv"
 & "$T\venv\Scripts\Activate.ps1"
 python -m pip install --upgrade pip
 Set-Location "$T\PATT-pdf"
-pip install -e ".[ocr,dev]" 2>&1 | Select-Object -Last 3
-patt-pdf --version              # 预期：patt-pdf 0.3.1.dev0
+pip install ".[ocr,dev]" 2>&1 | Select-Object -Last 3     # 普通安装；可编辑安装见 README
+patt-pdf --version              # 预期：patt-pdf 0.3.2.dev0
 python -c "import pymupdf, numpy, fontTools, cv2; print(pymupdf.VersionBind, numpy.__version__, fontTools.version, cv2.__version__)"
 ```
 
@@ -136,12 +138,13 @@ python -m pytest -q -p no:cacheprovider -rs 2>&1 | Tee-Object "$T\pytest.txt" | 
 
 **以实际输出为准。**下面只说明哪些测试**按设计**会在 Windows 上跳过，用来判断跳过是否合理；它不是预先写好的结果，请照实填写 passed/failed/skipped 数量。
 
-共 124 项。按测试代码中的跳过条件，在 Windows 上：
-- **总会 SKIP 的 3 项**（检查的是 POSIX 专有行为，Windows 由别的项目覆盖）：
+共 161 项。按测试代码中的跳过条件，在 Windows 上：
+- **总会 SKIP 的 5 项**（检查的是 POSIX 专有行为，Windows 由别的项目覆盖）：
   - `test_key_save_is_private_and_never_printed`、`test_key_file_permissions`：POSIX 权限位，由第 7 节 F 项手动检查 ACL 替代；
-  - `test_pipeline_in_legacy_posix_locales`：POSIX 区域设置模拟，Windows 改由 `test_pipeline_with_platform_default_encoding` 在真实的系统代码页下运行。
+  - `test_pipeline_in_legacy_posix_locales`、`test_pth_with_non_ascii_path_is_decoded_with_locale_encoding`：POSIX 区域设置模拟；Windows 改由 `test_pipeline_with_platform_default_encoding` 在真实的系统代码页下运行；
+  - `test_posix_open_reader_does_not_block_replace`：POSIX 的替换语义；Windows 改由 `test_native_windows_lock` 实测。
 - **没有 Tesseract 时再多 5 项 SKIP**，原因写明 tesseract/opencv 或 OCR。
-- 因此，如果字体、Tesseract 都齐备且没有失败，数字应是 121 passed、3 skipped；没有 Tesseract 时是 116 passed、8 skipped。**若出现其他跳过原因或任何失败，都要逐条报告。**
+- 因此，字体、Tesseract 都齐备且没有失败时，应是 156 passed、5 skipped；没有 Tesseract 时是 151 passed、10 skipped。这是根据代码推算的数字，不是 Windows 实测结果。**若出现其他跳过原因或任何失败，都要逐条报告。**
 - `test_unicode_filename_roundtrip` 和 `test_legacy_console_encoding_does_not_abort` 只在 POSIX 非 UTF-8 文件系统编码下跳过，在 Windows 上**应当运行**；若跳过请报告。
 
 **编码专项（本版重点）：**

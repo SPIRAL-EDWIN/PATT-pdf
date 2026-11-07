@@ -38,6 +38,7 @@ import pymupdf
 from . import ENGINE_VERSION
 from .backends import AuthError, Backend, BackendError, BudgetExceeded, Meter, QuotaExceeded
 from .model import PagePlan, Unit
+from .ocr import OCRUnavailable
 from .tm import TranslationMemory
 
 # ---------------------------------------------------------------- statuses
@@ -150,18 +151,30 @@ def atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
-def replace_file(tmp: str | os.PathLike, target: Path) -> None:
-    """os.replace with a clear error when the target is locked (typical on Windows when the
-    PDF is open in a viewer). The temp file is removed on failure; the old target stays."""
-    try:
-        os.replace(tmp, target)
-    except PermissionError as e:
+def replace_file(tmp: str | os.PathLike, target: Path, retries: int = 3, delay: float = 0.2) -> None:
+    """Atomic replace of `target` by `tmp`, with a clear error when the target is locked.
+
+    Windows: a file opened without FILE_SHARE_DELETE (most PDF viewers, antivirus scans)
+    cannot be replaced; os.replace raises PermissionError (WinError 5 or 32). A short retry
+    covers transient scanners. macOS/Linux normally allow replacing an open file (the viewer
+    keeps the old inode). On failure the temp file is removed and the old target is untouched.
+    The message names only the file name, not the absolute path."""
+    last = None
+    for attempt in range(max(1, retries)):
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise PermissionError(f"cannot replace {target}: file is in use or read-only "
-                              f"(close it in your PDF viewer and re-run) [{e.__class__.__name__}]") from None
+            os.replace(tmp, target)
+            return
+        except PermissionError as e:
+            last = e
+            if attempt + 1 < retries:
+                time.sleep(delay)
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    code = getattr(last, "winerror", None) or getattr(last, "errno", None)
+    raise PermissionError(f"cannot replace output {Path(target).name}: file is in use or read-only "
+                          f"(close it in your PDF viewer and re-run) [code {code}]") from None
 
 
 # ======================================================================== plan validity
@@ -213,10 +226,10 @@ def load_plan(ws: Workspace, rel: str, verify: bool = True) -> list[PagePlan]:
 
 # ======================================================================== plan
 def _no_paths(ws: Workspace, msg: str) -> str:
-    """Error messages end up in reports that users share: strip local absolute paths."""
-    for root, label in ((str(ws.src), "<input>"), (str(ws.state), "<state>")):
-        msg = msg.replace(root, label)
-    return msg
+    """Error messages end up in reports that users share: no absolute local paths (any OS,
+    raw or escaped). Paths below the input/state folders keep their relative part."""
+    from .osenv import redact
+    return redact(msg, {"<input>": ws.src if ws.src.is_dir() else ws.src.parent, "<state>": ws.state})
 
 
 def _plan_error(ws: Workspace, rel: str, msg: str) -> dict:
@@ -574,7 +587,12 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
                     if plan.kind == "text":
                         pq["residual_en"] = residual_english(o[plan.page], plan, tg)
                     elif ocr_qa:
-                        pq["residual_en"] = residual_english_ocr(o[plan.page], plan, tg)
+                        try:
+                            pq["residual_en"] = residual_english_ocr(o[plan.page], plan, tg)
+                        except (OCRUnavailable, ImportError) as e:      # OCR needed for this check only
+                            pq["residual_en"] = None
+                            pq["issues"].append({"issue": "residual_check_skipped",
+                                                 "detail": f"OCR unavailable: {e}"[:200]})
                     else:
                         pq["residual_en"] = None; pq["issues"].append({"issue": "residual_check_skipped"})
                 if pq["residual_en"] and len(pq["residual_en"]) > 3:
@@ -587,9 +605,27 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
         qa["translation_origins"] = sorted(origins)
     except Exception as e:
         qa["status"] = ERROR; qa["error"] = _no_paths(ws, f"{type(e).__name__}: {e}")[:300]
+        qa["error_kind"] = _error_kind(e)
+        for pq in qa["pages"]:                        # schema: every page always has a status
+            pq.setdefault("status", ERROR); pq["pass"] = False
     qa["pass"] = qa["status"] == PASS                 # kept for backward compatibility
     atomic_write_text(ws.qa_path(rel), json.dumps(qa, ensure_ascii=False, indent=1))
     return qa
+
+
+def _error_kind(e: BaseException) -> str:
+    """Coarse cause for the CLI and report: what the user can do about it."""
+    if isinstance(e, StalePlan):
+        return "unreadable_input" if str(e).startswith("error:") else "stale_plan"
+    if isinstance(e, PermissionError):
+        return "file_in_use_or_read_only"
+    if isinstance(e, OCRUnavailable):
+        return "ocr_unavailable"
+    if type(e).__name__ == "FontsMissing":
+        return "fonts_missing"
+    if isinstance(e, OSError):
+        return "os_error"
+    return "internal_error"
 
 
 def _compare_links(src, out_path, plans, pages):

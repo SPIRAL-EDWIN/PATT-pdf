@@ -1,6 +1,13 @@
 """Run the fixture generator and a small CLI pipeline in a child process whose default text
 encoding is NOT UTF-8 (see tests/test_encoding.py). Prints only ASCII. Exit codes:
-0 ok, 1 assertion failed."""
+0 ok, 1 assertion failed, 2 an implicit default-encoding use was attributed to project code.
+
+Detection: the child runs with `-X warn_default_encoding`. Every EncodingWarning is recorded
+with the file that triggered it. Warnings raised from PATT-PDF code (src/patt_pdf, the probe and
+the fixture generator) fail the probe; warnings from the standard library or third-party
+packages are listed but do not fail it. (v0.3.1 turned *all* EncodingWarnings into errors, so
+`locale.getpreferredencoding()` inside the probe itself aborted it on Python 3.11+ before the
+pipeline ran: review findings W01 / macOS.)"""
 from __future__ import annotations
 
 import json
@@ -10,9 +17,36 @@ import tempfile
 import warnings
 from pathlib import Path
 
-warnings.simplefilter("error", EncodingWarning)        # any implicit default-encoding I/O fails
-
 HERE = Path(__file__).parent
+PROJECT = (HERE.parent.parent / "src" / "patt_pdf").resolve()
+OWN = [PROJECT, HERE.resolve()]
+_seen: list[tuple[str, int, str]] = []
+_orig_showwarning = warnings.showwarning
+
+
+def _record(message, category, filename, lineno, file=None, line=None):
+    if issubclass(category, EncodingWarning):
+        _seen.append((filename, lineno, str(message)))
+    else:
+        _orig_showwarning(message, category, filename, lineno, file, line)
+
+
+warnings.simplefilter("always", EncodingWarning)
+warnings.showwarning = _record
+
+
+def _own(filename: str) -> bool:
+    try:
+        f = Path(filename).resolve()
+    except (OSError, ValueError):
+        return False
+    return any(f == o or o in f.parents for o in OWN)
+
+
+def default_encoding() -> str:
+    """The locale encoding, without itself triggering EncodingWarning (getencoding: 3.11+)."""
+    getenc = getattr(locale, "getencoding", None)
+    return getenc() if getenc else locale.getpreferredencoding(False)
 sys.path.insert(0, str(HERE))
 import make_fixtures  # noqa: E402
 
@@ -31,7 +65,8 @@ def run():
     # Python too; only a POSIX system with a legacy-locale file system encoding differs, and
     # there the non-ASCII file name is left out of this probe (documented limitation).
     utf8_fs = sys.getfilesystemencoding().lower().replace("-", "") == "utf8"
-    print("default encoding:", locale.getpreferredencoding(False), "utf8_mode:", sys.flags.utf8_mode)
+    print("default encoding:", default_encoding(), "utf8_mode:", sys.flags.utf8_mode,
+          "warn_default_encoding:", getattr(sys.flags, "warn_default_encoding", "n/a"))
     with tempfile.TemporaryDirectory(prefix="patt-enc-") as td:
         td = Path(td); src = td / "in"
         make_fixtures.main(str(src))
@@ -69,6 +104,14 @@ def run():
         legacy.write_bytes(json.dumps({"Contents": "Caf\u00e9 \u00a5"}, ensure_ascii=False).encode("cp1252"))
         check(cli(["translate", str(src), "--state", str(st), "--backend", "manual", "--manual-tm", str(legacy),
                    "--max-chars", "99", "--files", "toc.pdf"]) == 1, "non-UTF-8 manual TM must be an error")
+    own = [w for w in _seen if _own(w[0])]
+    other = sorted({(Path(w[0]).name, w[1]) for w in _seen if not _own(w[0])})
+    print("EncodingWarnings from other code (not failing):", other or "none")
+    if own:
+        for f, n, m in own:
+            print("FAIL: implicit default encoding in project code:",
+                  f"{Path(f).name}:{n}: {m}".encode("ascii", "backslashreplace").decode())
+        sys.exit(2)
     print("OK")
 
 

@@ -1,0 +1,107 @@
+# Offline test matrix for PATT-PDF (Linux, macOS, Windows; x64 and arm64 where GitHub offers
+# hosted runners). No secrets, no translation API: tests use synthetic PDFs and fake backends.
+#
+# Status: written for v0.3.2.dev0 but NOT RUN yet (the repository had no workflow when this file
+# was added). Treat every job as unverified until a run log exists.
+#
+# Actions used (first-party, GitHub-maintained, MIT): actions/checkout@v4, actions/setup-python@v5,
+# actions/upload-artifact@v4. Pin to a commit SHA before enabling on a fork you do not control.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read            # read-only token; the workflow writes nothing to the repository
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }} / ocr=${{ matrix.ocr }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-24.04: x64, ubuntu-24.04-arm: arm64, macos-14: arm64, macos-13: x64,
+        # windows-2022: x64 (no hosted Windows arm64 runner is assumed here)
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-13, windows-2022]
+        python: ["3.10", "3.12"]
+        ocr: [true]
+        include:
+          - {os: ubuntu-24.04, python: "3.13", ocr: true}
+          - {os: ubuntu-24.04, python: "3.12", ocr: false}
+          - {os: windows-2022, python: "3.12", ocr: false}
+          - {os: macos-14, python: "3.11", ocr: false}
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # ---- fonts: Noto CJK SC (SIL OFL 1.1) from the OS package manager / Homebrew; on Windows
+      #      from the official notofonts/noto-cjk release (static OTF), into a job-local folder
+      - name: Fonts (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - name: Fonts (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --cask font-noto-sans-cjk-sc font-noto-serif-cjk-sc || brew install --cask font-noto-sans-cjk font-noto-serif-cjk
+      - name: Fonts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP\noto"; New-Item -ItemType Directory $d | Out-Null
+          $base = "https://github.com/notofonts/noto-cjk/raw/main"
+          foreach ($f in "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf","Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
+                         "Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf","Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Bold.otf") {
+            Invoke-WebRequest "$base/$f" -OutFile (Join-Path $d (Split-Path $f -Leaf))
+          }
+          "PATT_PDF_FONT_SOURCE=$d" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      # ---- Tesseract (Apache-2.0) with English data, only for ocr=true jobs
+      - name: Tesseract (Linux)
+        if: matrix.ocr && runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+      - name: Tesseract (macOS)
+        if: matrix.ocr && runner.os == 'macOS'
+        run: brew install tesseract
+      - name: Tesseract (Windows)
+        if: matrix.ocr && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install tesseract -y --no-progress
+          "PATT_PDF_TESSERACT=C:\Program Files\Tesseract-OCR\tesseract.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Install (regular, non-editable)
+        run: python -m pip install ".[ocr,dev]"
+      - name: Environment report
+        run: |
+          patt-pdf --version
+          patt-pdf fonts
+          patt-pdf doctor || true
+      - name: Lint
+        run: python -m pyflakes src tests
+      - name: Tests
+        run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit.xml
+      - name: Tests with UTF-8 mode off (platform default encoding)
+        if: runner.os == 'Windows'
+        env:
+          PYTHONUTF8: "0"
+        run: python -m pytest -q -p no:cacheprovider -rA tests/test_encoding.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.os }}-py${{ matrix.python }}-ocr${{ matrix.ocr }}
+          path: junit.xml
+          retention-days: 14

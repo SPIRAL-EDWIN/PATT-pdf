@@ -23,18 +23,13 @@ OCR_TIMEOUT_S = float(os.environ.get("PATT_PDF_OCR_TIMEOUT", "120"))
 
 
 def tesseract_cmd() -> str:
-    """Tesseract executable: $PATT_PDF_TESSERACT, else `tesseract` on PATH, else the
-    default Windows install location. Raises OCRUnavailable with a clear message."""
-    import shutil
-    cand = os.environ.get("PATT_PDF_TESSERACT") or shutil.which("tesseract")
-    if not cand and os.name == "nt":
-        for base in (os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("LOCALAPPDATA", "")):
-            p = os.path.join(base, "Tesseract-OCR", "tesseract.exe") if base else ""
-            if p and os.path.exists(p):
-                cand = p; break
-    if not cand or (not os.path.exists(cand) and not shutil.which(cand)):
-        raise OCRUnavailable("tesseract not found: install it or set PATT_PDF_TESSERACT to the executable")
-    return cand
+    """Tesseract executable (osenv.find_tesseract): $PATT_PDF_TESSERACT, else PATH, else the
+    default install folders of the OS. Raises OCRUnavailable with the reason."""
+    from .osenv import find_tesseract
+    exe, how = find_tesseract()
+    if not exe:
+        raise OCRUnavailable(f"{how}: install Tesseract or set PATT_PDF_TESSERACT to the executable")
+    return exe
 
 
 def _tesseract(png_bytes, psm=3):
