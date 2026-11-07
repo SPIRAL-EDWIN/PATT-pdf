@@ -186,51 +186,85 @@ def test_doctor_reports_without_changing_anything(tmp_path, monkeypatch, capsys)
     assert rc == 2 and "fonts: 0/4" in out and "search order" in out
     assert not (tmp_path / "nofonts").exists()                     # read-only
     assert "locale_encoding" in out and "tesseract" in out
+    for k in ("pth_strategy", "pth_locale_encoding", "site_frozen", "opencv:"):   # the retest prompts quote these
+        assert k in out, k
 
 
-def test_editable_install_warning_for_non_ascii_source_and_legacy_locale():
-    """macOS finding: editable install under a non-ASCII folder + ISO8859-1 locale cannot be
-    imported (CPython's site.py reads .pth files with the locale encoding)."""
-    w = osenv.install_warnings("/Users/a/PATT 验证/src/patt_pdf/osenv.py",
-                               {"locale_encoding": "ISO8859-1", "utf8_mode": False, "os": "macos", "python": "3.11.16"})
-    assert w and "pip install ." in w[0] and "PYTHONUTF8=1" in w[0]
-    assert not osenv.install_warnings("/Users/a/PATT 验证/src/x.py",           # 3.13+: .pth read as UTF-8 first
-                                      {"locale_encoding": "ISO8859-1", "utf8_mode": False, "os": "macos",
-                                       "python": "3.13.1"})
-    assert not osenv.install_warnings("/Users/a/PATT 验证/src/x.py", {"locale_encoding": "UTF-8", "os": "macos"})
-    assert not osenv.install_warnings("/Users/a/src/x.py", {"locale_encoding": "ISO8859-1", "os": "macos"})
+def test_editable_install_warning_follows_the_pth_strategy():
+    """macOS finding: editable install under a non-ASCII folder + ISO8859-1 locale on Python 3.11
+    could not be imported. The warning depends on the interpreter's site.py strategy, not on its
+    version, and no longer promises that PYTHONUTF8=1 fixes it (it does not on 3.11+)."""
+    base = {"locale_encoding": "ISO8859-1", "pth_locale_encoding": "ISO8859-1", "utf8_mode": False, "os": "macos"}
+    w = osenv.install_warnings("/Users/a/PATT 验证/src/patt_pdf/osenv.py", dict(base, pth_strategy="locale"))
+    assert w and "pip install ." in w[0] and "not a reliable fix" in w[0]
+    assert not osenv.install_warnings("/Users/a/PATT 验证/src/x.py", dict(base, pth_strategy="utf8-first"))
+    # UTF-8 Mode on 3.11+ does not change the encoding site.py uses: still warn
+    assert osenv.install_warnings("/Users/a/PATT 验证/src/x.py", dict(base, pth_strategy="locale", utf8_mode=True))
+    assert not osenv.install_warnings("/Users/a/PATT 验证/src/x.py",
+                                      dict(base, pth_strategy="locale", pth_locale_encoding="UTF-8"))
+    assert not osenv.install_warnings("/Users/a/src/x.py", dict(base, pth_strategy="locale"))
+    # Linux legacy locale without UTF-8 Mode: even a UTF-8-first site.py cannot help (real 3.12.16
+    # under zh_CN.GBK: ModuleNotFoundError), because the path is re-encoded with the fs encoding
+    lin = dict(base, os="linux", pth_strategy="utf8-first", filesystem_encoding="gbk")
+    w = osenv.install_warnings("/home/a/PATT 验证/src/x.py", lin)
+    assert len(w) == 1 and "file system encoding is gbk" in w[0] and "PYTHONUTF8=1" in w[0]
+    assert not osenv.install_warnings("/home/a/PATT 验证/src/x.py", dict(lin, filesystem_encoding="utf-8"))
+    assert not osenv.install_warnings("/home/a/src/x.py", lin)
+    assert osenv.pth_strategy() in ("utf8-first", "locale", "unknown")
+    assert "pth_strategy" in osenv.platform_info()
 
 
-# What CPython does with a UTF-8 .pth file (Lib/site.py, addpackage), by version:
-#   3.10 – 3.12: decodes the file with the *locale* encoding ("locale" TextIOWrapper)
-#   3.13+      : decodes as UTF-8 first (BOM accepted); the locale encoding is only a fallback
-# The decoded line is then checked with os.path.exists(), i.e. re-encoded with the *file system*
-# encoding (always UTF-8 on macOS and Windows; follows the locale on Linux).
-# Whether a legacy locale name really takes effect also depends on the OS and its locale data
-# (macOS ships different locales than glibc; Python's C-locale coercion may switch to UTF-8).
-# So the child reports the encodings it actually used and the expected outcome is computed
-# from them, instead of assuming one behaviour for every platform and version.
+# How a UTF-8 .pth line reaches sys.path (Lib/site.py, addpackage) – established from the CPython
+# sources, NOT from the major.minor version alone:
+#   * Older site.py: io.TextIOWrapper(..., encoding="locale"). The "locale" encoding is
+#     _Py_GetLocaleEncoding(): it ignores UTF-8 Mode on 3.11+ (3.10 returned UTF-8 in UTF-8 Mode),
+#     so PYTHONUTF8=1 does NOT help there on 3.11.
+#   * Newer site.py: decode("utf-8-sig") first, locale encoding only on UnicodeDecodeError. This
+#     arrived in 3.13.0 AND was backported to 3.12.4 (Misc/NEWS: "site module now parses .pth file
+#     with UTF-8 first"). Checked: v3.12.0-3.12.3 old, v3.12.4/.8/.10/.12/.14 new, v3.11.9-3.11.16
+#     old, v3.10.12 old. Distributions may patch either way.
+# So the test asks the running interpreter which strategy its site.addpackage uses (string
+# constants of the loaded code object: on 3.11+ release builds `site` is FROZEN, so
+# inspect.getsource() fails there; found when running real 3.11.18/3.12.16 builds), and which encodings its "locale" text wrapper and file system really use, then
+# predicts found / missing / error from that. Review findings that motivated this: macOS 3.12.14
+# found the package under zh_CN.GBK (backport), macOS 3.11.16 failed even with PYTHONUTF8=1.
 _PTH_CHILD = (
     "import io, sys, site, importlib.util as u\n"
+    "def consts(co, d=0):\n"
+    "    for c in co.co_consts:\n"
+    "        if isinstance(c, str): yield c\n"
+    "        elif hasattr(c, 'co_consts') and d < 4: yield from consts(c, d + 1)\n"
+    "k = set(consts(site.addpackage.__code__))\n"
+    "strat = 'utf8-first' if 'utf-8-sig' in k else ('locale' if 'locale' in k else 'unknown')\n"
+    "frozen = str(site.addpackage.__code__.co_filename.startswith('<frozen'))\n"
     "enc = io.TextIOWrapper(io.BytesIO(), encoding='locale').encoding\n"
+    "try:\n"
+    "    import locale; genc = locale.getencoding()\n"
+    "except AttributeError:\n"
+    "    genc = enc\n"
     "try:\n"
     "    site.addsitedir(sys.argv[1]); r = 'found' if u.find_spec('pthprobe_pkg') else 'missing'\n"
     "except Exception as e:\n"
     "    r = 'error:' + type(e).__name__\n"
-    "print(enc + '|' + sys.getfilesystemencoding() + '|' + r)\n")
+    "print('|'.join([strat, enc, genc, sys.getfilesystemencoding(), str(sys.flags.utf8_mode),\n"
+    "                sys.version.split()[0], frozen, r]))\n")
 
 
-def _expected_pth_result(locale_enc: str, utf8_path: bytes, fs_enc: str = "utf-8",
-                         version: tuple = tuple(sys.version_info[:2])) -> str:
-    """found / missing / error for a .pth line `utf8_path` (UTF-8 bytes) under CPython `version`."""
+def _expected_pth_result(strategy: str, locale_enc: str, utf8_path: bytes, fs_enc: str = "utf-8") -> str:
+    """found / missing / error / unknown for a .pth line `utf8_path` (UTF-8 bytes).
+
+    strategy: 'utf8-first' (site.py tries utf-8-sig, then the locale encoding) or 'locale'
+    (decodes with the locale encoding only), as reported by the interpreter itself."""
     try:
-        if version >= (3, 13):
+        if strategy == "utf8-first":
             try:
                 text = utf8_path.decode("utf-8-sig")
             except UnicodeDecodeError:
                 text = utf8_path.decode(locale_enc)
-        else:
+        elif strategy == "locale":
             text = utf8_path.decode(locale_enc)
+        else:
+            return "unknown"
     except UnicodeDecodeError:
         return "error"
     except LookupError:
@@ -242,52 +276,86 @@ def _expected_pth_result(locale_enc: str, utf8_path: bytes, fs_enc: str = "utf-8
     return "found" if back == utf8_path else "missing"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX locale simulation (Windows: see the Windows retest prompt)")
-def test_pth_decoding_matches_cpython_rules(tmp_path):
-    """macOS finding (v0.3.1): editable install from a non-ASCII folder could not be imported under
-    LC_ALL=en_US.ISO8859-1 PYTHONUTF8=0 on Python 3.11. v0.3.2's test *assumed* every legacy
-    locale breaks it; on macOS / Python 3.12 with zh_CN.GBK the package was found (independent
-    review). Now the child reports the locale and file system encodings it really used, and the
-    result must follow CPython's rule for that version; PYTHONUTF8=1 must always find it."""
-    import subprocess
-    from test_encoding import _legacy_locales
-    if sys.getfilesystemencoding().lower().replace("-", "") != "utf8":
-        pytest.skip("parent process already runs in a legacy locale; the test sets the locale per child")
+def _pth_fixture(tmp_path):
     site_dir = tmp_path / "site"; site_dir.mkdir()
     pkg_root = tmp_path / "源码 目录"; (pkg_root / "pthprobe_pkg").mkdir(parents=True)
     (pkg_root / "pthprobe_pkg" / "__init__.py").write_text("OK = 1\n", encoding="utf-8")
     line = str(pkg_root).encode("utf-8")
-    (site_dir / "probe.pth").write_bytes(line + b"\n")
+    (site_dir / "probe.pth").write_bytes(line + b"\n")          # exactly what setuptools writes: UTF-8
+    return site_dir, line
+
+
+def _run_pth_child(site_dir, env):
+    import subprocess
+    # -S: the child must not process this environment's own .pth files at start-up (an editable
+    # install from a non-ASCII folder would abort it); it imports site and runs addsitedir itself
+    r = subprocess.run([sys.executable, "-S", "-c", _PTH_CHILD, str(site_dir)], capture_output=True, env=env, timeout=60)
+    parts = r.stdout.decode("ascii", "replace").strip().split("|")
+    if len(parts) != 8:
+        pytest.fail(f"child crashed: {r.stderr.decode('ascii', 'replace')[-300:]}")
+    return dict(zip(("strategy", "enc", "getencoding", "fs", "utf8_mode", "python", "frozen", "result"), parts))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX locale simulation (Windows: see the Windows retest prompt)")
+def test_pth_decoding_matches_the_interpreters_own_rule(tmp_path):
+    """For every available locale and UTF-8 Mode off/on, the real outcome of site.addsitedir on a
+    UTF-8 .pth pointing to a non-ASCII folder must equal the prediction from the interpreter's own
+    strategy and encodings. Nothing is assumed per Python version; every observation is printed."""
+    from test_encoding import _legacy_locales
+    if sys.getfilesystemencoding().lower().replace("-", "") != "utf8":
+        pytest.skip("parent process already runs in a legacy locale; the test sets the locale per child")
+    site_dir, line = _pth_fixture(tmp_path)
     observed = []
     for name in ["C.UTF-8"] + _legacy_locales():
-        base = dict(os.environ, LC_ALL=name)
-        r = subprocess.run([sys.executable, "-c", _PTH_CHILD, str(site_dir)], capture_output=True,
-                           env=dict(base, PYTHONUTF8="0"), timeout=60)
-        parts = r.stdout.decode("ascii", "replace").strip().split("|")
-        if len(parts) != 3:
-            pytest.fail(f"child crashed under {name}: {r.stderr.decode('ascii', 'replace')[-300:]}")
-        enc, fs, result = parts
-        want = _expected_pth_result(enc, line, fs)
-        observed.append((name, enc, fs, result, want))
-        if want != "unknown":
-            assert result.split(":")[0] == want, observed
-        r8 = subprocess.run([sys.executable, "-c", _PTH_CHILD, str(site_dir)], capture_output=True,
-                            env=dict(base, PYTHONUTF8="1"), timeout=60)
-        assert r8.stdout.decode().strip().endswith("|found"), (name, r8.stdout, r8.stderr[-300:])
-    print("pth decoding (locale, locale-enc, fs-enc, result, expected):", observed)
+        for utf8 in ("0", "1"):
+            c = _run_pth_child(site_dir, dict(os.environ, LC_ALL=name, PYTHONUTF8=utf8))
+            want = _expected_pth_result(c["strategy"], c["enc"], line, c["fs"])
+            observed.append((name, f"UTF8={utf8}", c["python"], c["strategy"], f"frozen={c['frozen']}", c["enc"],
+                             c["getencoding"], c["fs"], c["result"], want))
+            # an unrecognised site.py is a finding to report, not something to pass silently
+            assert want != "unknown", ("cannot classify this interpreter's site.addpackage", observed)
+            assert c["result"].split(":")[0] == want, observed
+    assert observed[0][8] == "found", observed                      # C.UTF-8 must always work
+    print("pth decoding (locale, mode, python, strategy, site, locale-enc, getencoding, fs-enc, result, expected):")
+    for o in observed:
+        print("   ", o)
 
 
-def test_expected_pth_rule_is_version_aware():
+def test_expected_pth_rule_follows_the_strategy_not_the_version():
     p = "/x/源码/a".encode("utf-8")
-    for v in ((3, 10), (3, 11), (3, 12)):
-        assert _expected_pth_result("UTF-8", p, "utf-8", v) == "found"
-        assert _expected_pth_result("ISO8859-1", p, "utf-8", v) == "missing"   # decodes to the wrong path
-        assert _expected_pth_result("CP1252", p, "utf-8", v) == "error"        # 0x90/0x81 undefined
-        assert _expected_pth_result("GBK", p, "utf-8", v) == "missing"         # decodes to the wrong path
-    assert _expected_pth_result("ISO8859-1", p, "utf-8", (3, 13)) == "found"    # UTF-8 first since 3.13
-    assert _expected_pth_result("GBK", p, "utf-8", (3, 13)) == "found"
-    # Linux legacy locale: right text, but the file system encoding cannot encode it the same way
-    assert _expected_pth_result("UTF-8", p, "gbk", (3, 12)) == "missing"
+    assert _expected_pth_result("locale", "UTF-8", p) == "found"
+    assert _expected_pth_result("locale", "ISO8859-1", p) == "missing"      # decodes to the wrong path
+    assert _expected_pth_result("locale", "CP1252", p) == "error"           # 0x90/0x81 undefined
+    assert _expected_pth_result("locale", "GBK", p) == "missing"            # decodes to the wrong path
+    for enc in ("ISO8859-1", "GBK", "CP1252"):                              # 3.12.4+ / 3.13+: UTF-8 first
+        assert _expected_pth_result("utf8-first", enc, p) == "found"
+    assert _expected_pth_result("utf8-first", "UTF-8", p, "gbk") == "missing"   # Linux legacy fs encoding
+    assert _expected_pth_result("unknown", "GBK", p) == "unknown"
+
+
+def test_pth_strategy_detection_on_this_interpreter():
+    """The detection must classify this interpreter from the code that actually runs, also when
+    `site` is frozen (3.11+ release builds, where inspect.getsource() raises OSError). If the
+    site.py file is readable, its addpackage source must agree. Prints a line for retest reports."""
+    import ast
+    import site
+    strat = osenv.pth_strategy()
+    frozen = osenv.site_is_frozen()
+    print("site.addpackage strategy:", strat, "python", sys.version.split()[0], "frozen", frozen, "site", site.__file__)
+    assert strat in ("utf8-first", "locale"), strat
+    try:
+        text = open(site.__file__, encoding="utf-8").read()
+    except (OSError, TypeError, UnicodeDecodeError):
+        text = None
+    if text:
+        fn = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "addpackage")
+        src = ast.get_source_segment(text, fn)
+        assert ("utf-8-sig" in src) == (strat == "utf8-first"), (strat, site.__file__)
+    if sys.version_info >= (3, 13):
+        assert strat == "utf8-first"           # documented in the 3.13 site docs ("Changed in version 3.13")
+    if sys.version_info[:2] <= (3, 11):
+        assert strat == "locale" or "utf-8-sig" in src   # upstream 3.10/3.11 never had it; a patched build may
+
 
 # ---------------------------------------------------------------- redaction: arbitrary paths, end-to-end
 @pytest.mark.parametrize("msg,want", [
@@ -305,9 +373,15 @@ def test_expected_pth_rule_is_version_aware():
     ("ratio 3/4, and/or, a/b/c, 2025/03/31, km/h, N/A, I/O, 1/2/3", "ratio 3/4, and/or, a/b/c, 2025/03/31, km/h, N/A, I/O, 1/2/3"),
     ("doi:10.0000/example.2026.001", "doi:10.0000/example.2026.001"),
     ("single /x and /etc", "single /x and /etc"),
+    # single-segment root paths: only when quoted as a whole or with a file extension
+    ("[Errno 2] No such file or directory: '/privatefile'", "[Errno 2] No such file or directory: '<path>/privatefile'"),
+    ("error at /report.pdf: denied", "error at <path>/report.pdf: denied"),
+    ("open failed: /privatefile", "open failed: /privatefile"),          # documented gap: ambiguous with prose
+    ("Use /help for help; version 1.2/3.4; size 3/4.5", "Use /help for help; version 1.2/3.4; size 3/4.5"),
 ])
 def test_redact_arbitrary_absolute_paths(msg, want):
     assert osenv.redact(msg) == want
+    assert osenv.redact(want) == want                                   # idempotent on redacted text
 
 
 def _plan_with_failing_open(src, st, message, monkeypatch):

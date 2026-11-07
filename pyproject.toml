@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patt-pdf"
-version = "0.3.3.dev0"
+version = "0.3.4.dev0"
 description = "PATT-PDF (experimental): position-aware EN→ZH translation of PDF pages that tries to keep figures, layout and graphics in place"
 readme = "README.md"
 requires-python = ">=3.10"

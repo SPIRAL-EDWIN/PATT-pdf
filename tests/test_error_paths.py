@@ -186,3 +186,29 @@ def test_posix_open_reader_does_not_block_replace(batch, fonts_ready):
     assert cli("render", s, "--state", st, "--backend", "manual", "--manual-tm", tm, "--files", "table.pdf") == 0
     with open(st / "out" / "table.pdf", "rb"):
         assert cli("render", s, "--state", st, "--backend", "manual", "--manual-tm", tm, "--files", "table.pdf") == 0
+
+
+def test_opencv_missing_is_page_not_processed_not_a_page_error(corpus, tmp_path, monkeypatch):
+    """Windows arm64 has no opencv-python-headless wheel. With Tesseract present but cv2 missing,
+    planning a scan must record 'OCR dependencies missing' (page_not_processed, retryable after
+    installing [ocr]), not an exception that marks the page as a planning error."""
+    import importlib
+    import shutil as _sh
+    import sys as _sys
+    from patt_pdf.jobs import Workspace, plan_file
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name, *a, **k):             # cv2 may already be in sys.modules: hide it
+        if name == "cv2" or name.startswith("cv2."):
+            raise ImportError("No module named 'cv2'", name="cv2")
+        return real_import_module(name, *a, **k)
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+    monkeypatch.delitem(_sys.modules, "cv2", raising=False)
+    monkeypatch.setitem(_sys.modules, "cv2", None)      # "import cv2" now raises ImportError too
+    src = tmp_path / "in"; src.mkdir(); _sh.copy(corpus["src"] / "scanned.pdf", src)
+    ws = Workspace(src, tmp_path / "st")
+    st = plan_file(ws, "scanned.pdf", ocr=True)
+    assert st["status"] == "planned", st
+    plan = json.loads(ws.plan_path("scanned.pdf").read_text(encoding="utf-8"))
+    note = plan["pages"][0]["notes"][0]["skipped"]
+    assert "cv2" in note and "patt-pdf[ocr]" in note

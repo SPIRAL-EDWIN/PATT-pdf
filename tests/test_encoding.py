@@ -98,7 +98,10 @@ def _legacy_locales():
                    ("en_US.CP1252", "en_US.ISO8859-1", "en_US.ISO-8859-1", "en_US.iso88591")):
         for name in groups:
             try:
-                r = subprocess.run([sys.executable, "-c", "import locale; locale.setlocale(locale.LC_ALL, '');"
+                # -S: ask the OS about the locale without running site.py, so that a .pth file that
+                # cannot be decoded in this locale (editable install, non-ASCII folder) is not
+                # mistaken for "locale not installed"
+                r = subprocess.run([sys.executable, "-S", "-c", "import locale; locale.setlocale(locale.LC_ALL, '');"
                                     "print(locale.getpreferredencoding(False))"],
                                    env=dict(os.environ, LC_ALL=name, PYTHONUTF8="0"), capture_output=True,
                                    timeout=30)
@@ -116,9 +119,45 @@ def test_pipeline_in_legacy_posix_locales(fonts_ready):
     names = _legacy_locales()
     if not names:
         pytest.skip("no non-UTF-8 locale installed (e.g. zh_CN.GBK, en_US.ISO8859-1)")
+    import patt_pdf
+    pkg = str(Path(patt_pdf.__file__).resolve())
+    editable_non_ascii = not pkg.isascii() and "site-packages" not in pkg
+    paths_non_ascii = [p for p in (sys.prefix, str(ROOT), pkg) if not p.isascii()]
+    ran, excused = [], []
     for name in names:
         rc, out = _run_probe({"LC_ALL": name}, fonts_ready)
+        if rc != 0:
+            why = _documented_limit(name, paths_non_ascii, editable_non_ascii)
+            if why:
+                # Only these two documented situations are excused (both printed); anything else fails.
+                print(f"[{name}] probe not applicable: {why}")
+                excused.append(f"{name}: {why}")
+                continue
         assert rc == 0 and "OK" in out, f"[{name}] " + out[-3000:]
+        ran.append(name)
+    if not ran:
+        pytest.skip("documented limits only: " + " | ".join(excused))
+
+
+def _documented_limit(name, paths_non_ascii, editable_non_ascii):
+    """Why a legacy-locale probe could not run, if it is one of the two documented limits:
+    1. Linux/BSD legacy locale without UTF-8 Mode: the file system encoding is not UTF-8, so
+       Python cannot use its own non-ASCII paths (seen with a venv in a non-ASCII folder: numpy's
+       extension module fails to load). README "Known limits"; never applies to macOS/Windows.
+    2. editable install from a non-ASCII folder whose .pth this interpreter cannot decode
+       (README "Editable installs"; asserted by test_osenv's .pth test)."""
+    env = dict(os.environ, LC_ALL=name, PYTHONUTF8="0")
+    r = subprocess.run([sys.executable, "-S", "-c", "import sys; print(sys.getfilesystemencoding())"],
+                       capture_output=True, env=env, timeout=60)
+    fs = r.stdout.decode("ascii", "replace").strip().lower().replace("-", "")
+    if paths_non_ascii and fs and fs != "utf8":
+        return f"file system encoding {fs} with non-ASCII interpreter/test paths (Linux legacy-locale limit)"
+    if editable_non_ascii:
+        r = subprocess.run([sys.executable, "-c", "import patt_pdf"], capture_output=True, env=env, timeout=60)
+        if r.returncode != 0:
+            return ("editable install from a non-ASCII folder not importable: "
+                    + r.stderr.decode("ascii", "backslashreplace").strip().splitlines()[-1][:160])
+    return None
 
 
 def test_probe_detects_implicit_encoding_in_project_code(fonts_ready, monkeypatch, tmp_path):

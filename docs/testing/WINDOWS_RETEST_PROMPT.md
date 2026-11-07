@@ -1,4 +1,4 @@
-# 给 Windows 上 Codex 的完整复测提示词：PATT-PDF v0.3.3.dev0
+# 给 Windows 上 Codex 的完整复测提示词：PATT-PDF v0.3.4.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -11,7 +11,7 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.3.dev0，实验性开发版，不是稳定版。本版只在 Linux 上测试过；**从未在 Windows 上运行过**。
+- **版本：**v0.3.4.dev0，实验性开发版，不是稳定版。本版只在 Linux 上测试过；**从未在 Windows 上运行过**。
 - **上一轮 Windows 实测（v0.3.1，`6b969b8`）发现的问题。**这些在 v0.3.2/v0.3.3 中已有对应修改，但都**未经 Windows 实机验证**：
   - W01：编码探针失败；
   - W02：错误 JSON 和报告中出现了 Windows 绝对路径；
@@ -54,11 +54,30 @@ git -C "$T\PATT-pdf" rev-parse HEAD
 ```
 任何一项不一致，**立即停止并报告**。
 
+## 1b. 退出码规则（必须遵守）
+
+在 PowerShell 中，`命令 | Tee-Object ... | Select-Object ...` 之后的 `$LASTEXITCODE` 不一定是被测命令的退出码。**所有检查都用下面的 `Run` 函数执行。**它先把完整输出写入日志，取得真实退出码后，再显示输出尾部：
+
+```powershell
+New-Item -ItemType Directory "$T\logs" -Force | Out-Null
+function Run([string]$Name) {
+  $cmd, $rest = $args
+  & $cmd @rest *> "$T\logs\$Name.txt"; $rc = $LASTEXITCODE
+  "[$Name] exit=$rc   (log: `$T\logs\$Name.txt)"; Get-Content "$T\logs\$Name.txt" -Tail 25
+  "$Name $rc" | Add-Content "$T\logs\_exitcodes.txt"
+}
+```
+用法示例：`Run pytest-ocr python -m pytest -q -p no:cacheprovider -rs`。环境变量要在 `Run` 之前用 `$env:X = ...` 设置，用完再还原。
+
 ## 2. 记录环境（用户名替换为 `<USER>`）
 
 ```powershell
 $PSVersionTable.PSVersion; [Environment]::OSVersion.VersionString; (Get-CimInstance Win32_OperatingSystem).Caption
-$env:PROCESSOR_ARCHITECTURE; git --version; py -0p
+$env:PROCESSOR_ARCHITECTURE; git --version
+# Python：py 启动器不一定存在（上一轮这台机器上就没有），两种都查
+Get-Command py, python, python3 -ErrorAction SilentlyContinue | Select-Object Name, Source
+if (Get-Command py -ErrorAction SilentlyContinue) { py -0p }
+python -c "import sys,platform;print(sys.version, platform.machine(), sys.executable)"
 chcp; [Console]::OutputEncoding.WebName
 Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' -Name ACP, OEMCP   # 只读查看
 Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -ErrorAction SilentlyContinue   # 只读查看
@@ -66,18 +85,32 @@ Get-Command tesseract -ErrorAction SilentlyContinue | Select-Object -ExpandPrope
 ```
 
 - **代码页：**若 ACP 是 `65001`，说明本机使用 UTF-8 系统代码页，**无法验证** cp936/cp1252。E1 中要写明这一点，不要为了测试去修改系统设置。
-- **Python：**3.11–3.13 均可，`py -3.12` 优先；没有 Python 时，征得同意后从 python.org 安装“仅当前用户”版本。
+- **Python：**3.11–3.13 均可。按下面的规则选出解释器，存入 `$PY`，后面一律用 `& $PY`：
+  ```powershell
+  $PY = $null
+  if (Get-Command py -ErrorAction SilentlyContinue) {
+    foreach ($v in "3.12","3.11","3.13") { & py "-$v" -c "import sys" 2>$null; if ($LASTEXITCODE -eq 0) { $PY = (& py "-$v" -c "import sys;print(sys.executable)"); break } }
+  }
+  if (-not $PY -and (Get-Command python -ErrorAction SilentlyContinue)) {
+    $ok = & python -c "import sys;print(int((3,10)<=sys.version_info[:2]<=(3,13)))"
+    if ($ok -eq "1") { $PY = (Get-Command python).Source }
+  }
+  "PY = $PY"; if ($PY) { & $PY --version }
+  ```
+  - `$PY` 为空时：**停下并询问用户。**只有用户同意后，才可以从 python.org 安装“仅当前用户”版本，或运行 `winget install Python.Python.3.12 --scope user`。不要自行下载安装器。
+  - `python` 可能是 Windows 应用商店的占位程序：运行后打开商店或无输出。这种情况视为没有 Python。
 
 ## 3. 安装（全新 venv，普通安装）
 
 ```powershell
-py -3.12 -m venv "$T\venv"; & "$T\venv\Scripts\Activate.ps1"      # 被执行策略阻止时：Set-ExecutionPolicy -Scope Process Bypass
+& $PY -m venv "$T\venv"; & "$T\venv\Scripts\Activate.ps1"      # 被执行策略阻止时：Set-ExecutionPolicy -Scope Process Bypass
 python -m pip install --upgrade pip
-pip install "$T\PATT-pdf[ocr,dev]" 2>&1 | Select-Object -Last 3
-patt-pdf --version                                                   # 预期：patt-pdf 0.3.3.dev0
+$extras = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "dev" } else { "ocr,dev" }   # opencv 没有 win_arm64 wheel
+Run install pip install "$T\PATT-pdf[$extras]"
+patt-pdf --version                                                   # 预期：patt-pdf 0.3.4.dev0
 python -c "import pymupdf,numpy,fontTools,cv2,platform;print(pymupdf.VersionBind,numpy.__version__,fontTools.version,cv2.__version__,platform.machine())"
 ```
-- **ARM64 Windows：**依赖没有 wheel 而安装失败时，记录 FAIL 和 pip 的报错。不要从源码编译。
+- **ARM64 Windows：**截至 2026-11-07，PyPI 上 PyMuPDF、numpy、Pillow、PyYAML 都有 `win_arm64` wheel，但 **opencv-python-headless 没有**。因此 ARM64 上不安装 `[ocr]`，OCR 相关项全部标为 SKIP（原因：不支持）。若其他依赖安装失败，记录 FAIL 和 pip 的报错，不要从源码编译。
 - **pip 报“文件名或扩展名太长”：**把这件事记入 W05。只对当前进程设置较短的临时目录后重试，例如 `$env:TEMP="C:\pt"; $env:TMP="C:\pt"`，前提是该目录可写，且只在测试目录范围内使用。
 
 **字体**（Noto Sans/Serif CJK SC，许可证为 SIL OFL 1.1）：
@@ -96,7 +129,7 @@ python -c "import pymupdf,numpy,fontTools,cv2,platform;print(pymupdf.VersionBind
 ```powershell
 $env:PATT_PDF_FONT_SOURCE = "$T\noto"; $env:PATT_PDF_FONT_DIR = "$T\fonts"
 patt-pdf fonts; "fonts rc=$LASTEXITCODE"
-patt-pdf doctor; "doctor rc=$LASTEXITCODE"           # 记录完整输出（脱敏）
+patt-pdf doctor; "doctor rc=$LASTEXITCODE"           # 记录完整输出（脱敏），包括 pth_strategy / pth_locale_encoding / site_frozen 三行
 ```
 
 **Tesseract**（UB Mannheim 构建，https://github.com/UB-Mannheim/tesseract/wiki ；或 `winget install UB-Mannheim.TesseractOCR`，需征得同意）：
@@ -114,17 +147,17 @@ python "$T\PATT-pdf\tools\ci_check_ocr.py" expect-present; "rc=$LASTEXITCODE"
 
 ```powershell
 Set-Location "$T\PATT-pdf"
-python -m pytest -q -p no:cacheprovider -rs 2>&1 | Tee-Object "$T\pytest-ocr.txt" | Select-Object -Last 25
+Run pytest-ocr python -m pytest -q -p no:cacheprovider -rs
 $keep = $env:PATT_PDF_TESSERACT; $env:PATT_PDF_TESSERACT = "$T\no-tesseract-here"
 python tools\ci_check_ocr.py expect-absent; "absent rc=$LASTEXITCODE"            # 必须输出 OK，rc=0
-python -m pytest -q -p no:cacheprovider -rs 2>&1 | Tee-Object "$T\pytest-noocr.txt" | Select-Object -Last 25
+Run pytest-noocr python -m pytest -q -p no:cacheprovider -rs
 $env:PATT_PDF_TESSERACT = $keep
 ```
 
 **按设计会跳过的项目**（用来核对，不是预填结果）：
 - Windows 上总会跳过 5 项：
   - POSIX 权限位：`test_key_save_is_private_and_never_printed`、`test_key_file_permissions`；
-  - POSIX locale 模拟：`test_pipeline_in_legacy_posix_locales`、`test_pth_decoding_matches_cpython_rules`；
+  - POSIX locale 模拟：`test_pipeline_in_legacy_posix_locales`、`test_pth_decoding_matches_the_interpreters_own_rule`；
   - POSIX 替换语义：`test_posix_open_reader_does_not_block_replace`。
 - 无 OCR 时另外跳过 5 项。
 - **应当运行：**`test_native_windows_lock`、`test_pipeline_with_platform_default_encoding`、`test_unicode_filename_roundtrip`、`tests/test_ci_workflow.py`。它们若被跳过，要作为发现报告。
@@ -136,7 +169,7 @@ $env:PATT_PDF_TESSERACT = $keep
 **E1 编码（W01）：**
 ```powershell
 python -c "import locale,sys,io;print(getattr(locale,'getencoding',locale.getpreferredencoding)(), io.TextIOWrapper(io.BytesIO(),encoding='locale').encoding, sys.getfilesystemencoding(), sys.flags.utf8_mode)"
-$env:PYTHONUTF8 = "0"; python -m pytest -q -p no:cacheprovider -rA tests\test_encoding.py 2>&1 | Tee-Object "$T\e1.txt" | Select-Object -Last 15; Remove-Item Env:PYTHONUTF8
+$env:PYTHONUTF8 = "0"; Run e1 python -m pytest -q -p no:cacheprovider -rA tests\test_encoding.py; Remove-Item Env:PYTHONUTF8
 ```
 - 预期：全部 PASS。
 - 第一行若为 `cp65001`/`utf-8`，就写明“本机系统代码页为 UTF-8，**未验证** cp936/cp1252”。这一结论只能来自真实的非 UTF-8 机器，不能靠修改设置制造。
@@ -148,13 +181,13 @@ $IN = "$T\输入 目录"; python tests\fixtures\make_fixtures.py $IN; Move-Item 
 $S = "$T\state-noocr"; $TM = "$T\manual_tm.json"
 patt-pdf plan $IN --state $S; "plan rc=$LASTEXITCODE"                                                   # 预期 1
 patt-pdf translate $IN --state $S --backend pseudo --max-chars 99999; "A1 rc=$LASTEXITCODE"             # 预期 2
-patt-pdf estimate $IN --state $S --backend manual --manual-tm $TM | Select-Object -Last 1              # 预期 981 字符 / 40 句段
+Run e2-est patt-pdf estimate $IN --state $S --backend manual --manual-tm $TM                          # 日志末行预期 981 字符 / 40 句段
 patt-pdf render $IN --state $S --backend pseudo --files toc.pdf; "A2 rc=$LASTEXITCODE"                  # 预期 2
 patt-pdf publish $IN --state $S --dest "$T\pub" --files toc.pdf; "A3 rc=$LASTEXITCODE"                 # 预期 2，且 pub 中没有 toc.pdf
 patt-pdf translate $IN --state $S --backend manual --manual-tm $TM --max-chars 99999 | Select-String missing_from_backend   # 预期 3
 patt-pdf translate $IN --state $S --backend manual --manual-tm $TM --max-chars 5; "B2 rc=$LASTEXITCODE"       # 预期 2
-patt-pdf render $IN --state $S --backend manual --manual-tm $TM 2>&1 | Tee-Object "$T\e2-render.txt"; "C1 rc=$LASTEXITCODE"   # 预期 1
-(Select-String -Path "$T\e2-render.txt" -Pattern KeyError).Count                                       # 预期 0
+Run e2-render patt-pdf render $IN --state $S --backend manual --manual-tm $TM                          # 预期 exit=1
+(Select-String -Path "$T\logs\e2-render.txt" -Pattern KeyError).Count                                       # 预期 0
 ```
 
 预期状态：
@@ -186,7 +219,7 @@ patt-pdf render $IN --state $S2 --backend manual --manual-tm $TM; "rc=$LASTEXITC
 patt-pdf render $IN --state $S --backend manual --manual-tm $TM --files table.pdf | Out-Null
 $f = "$S\out\table.pdf"; $before = (Get-FileHash $f).Hash
 $h = [System.IO.File]::Open($f, 'Open', 'Read', 'Read')            # 不允许 Delete/Write 共享
-patt-pdf render $IN --state $S --backend manual --manual-tm $TM --files table.pdf 2>&1 | Tee-Object "$T\e4.txt"; "rc=$LASTEXITCODE"
+Run e4 patt-pdf render $IN --state $S --backend manual --manual-tm $TM --files table.pdf
 $h.Close()
 (Get-FileHash $f).Hash -eq $before; Get-ChildItem "$S\out" -Force -Filter ".tmp-*"
 ```
@@ -225,6 +258,18 @@ $env:PATT_PDF_TESSERACT = "$T\missing\tesseract.exe"; python tools\ci_check_ocr.
 $env:PATT_PDF_TESSERACT = $keep; python tools\ci_check_ocr.py expect-present                         # 预期 OK
 ```
 
+**E9 可编辑安装（只记录，不预设结果）：**`$T` 的路径含中文，正好用来观察 Windows 上 `.pth` 的读取方式。
+```powershell
+& $PY -m venv "$Tenv-edit"
+Run e9-install "$T\venv-edit\Scripts\python.exe" -m pip install -e "$T\PATT-pdf"
+Run e9-import "$T\venv-edit\Scripts\python.exe" -c "import patt_pdf,sys; print('import OK', sys.version.split()[0])"
+Run e9-doctor "$T\venv-edit\Scripts\python.exe" -m patt_pdf.cli doctor
+$pth = (Get-Item "$T\venv-edit\Lib\site-packages\__editable__*.pth").FullName
+([IO.File]::ReadAllBytes($pth) | Select-Object -First 60 | ForEach-Object { '{0:x2}' -f $_ }) -join ' '      # .pth 的前 60 个字节（十六进制）
+```
+- 记录 `e9-import` 的结果，以及 doctor 中的 `pth_strategy`、`pth_locale_encoding`、`filesystem_encoding`。
+- **依据 CPython 源码的判断：**Windows 的文件系统编码总是 UTF-8。3.12.4+ 应为 `utf8-first`，预计能导入；3.11 和 3.12.0–3.12.3 按 ANSI 代码页读取 `.pth`，系统代码页为 UTF-8（65001）时预计能导入，为 cp936/cp1252 时预计失败，doctor 会警告。**以实测为准，不符时原样报告。**
+
 ## 6. 保存证据与清理
 
 - **证据：**把 `$T\*.txt`、`$T\report.md` 和截图复制到**用户指定的私有位置**（不要放进仓库，也不要上传）。
@@ -254,6 +299,7 @@ E5 路径脱敏 ............ PASS/FAIL
 E6 字体优先级 .......... PASS/FAIL（search_dirs 输出与命中的文件）
 E7 长路径 .............. 普通路径 rc=<…>（提示：…）；扩展前缀 rc=<…>
 E8 OCR 显式路径 ........ PASS/FAIL
+E9 可编辑安装 .......... import OK/失败（报错首行）；pth_strategy=<…> pth_locale_encoding=<…> filesystem_encoding=<…>
 
 每个 FAIL：最小复现命令 / 预期 / 实际 / 日志位置（私有）
 未验证项：cp936/cp1252 系统、阅读器交互、真实 PDF、真实翻译 API、<其他>

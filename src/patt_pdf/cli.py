@@ -220,7 +220,8 @@ def cmd_doctor(a):
     rc = EXIT_OK
     print(f"patt-pdf {__version__}")
     for k in ("os", "machine", "python", "implementation", "locale_encoding", "filesystem_encoding",
-              "utf8_mode", "stdout_encoding", "windows_long_paths_enabled"):
+              "utf8_mode", "stdout_encoding", "windows_long_paths_enabled",
+              "pth_strategy", "pth_locale_encoding", "site_frozen"):
         print(f"  {k:28s} {info.get(k)}")
     fd = font_dir()
     ready = [f for f in FACES.values() if (fd / f).exists()]
@@ -238,8 +239,9 @@ def cmd_doctor(a):
         print(f"tesseract: {show(exe)} (via {how})")
     else:
         print(f"tesseract: not available ({how}); scanned and outlined pages will be FAIL/page_not_processed")
-    import importlib.util
-    print("opencv: available" if importlib.util.find_spec("cv2") else "opencv: missing (pip install 'patt-pdf[ocr]')")
+    from .ocr import ocr_dependency_problem
+    cv = ocr_dependency_problem()                       # a real import: a broken cv2 counts as missing
+    print("opencv: available" if cv is None else f"opencv: missing – {cv}")
     for w in install_warnings(info=info):
         print("warning: " + w); rc = max(rc, EXIT_INCOMPLETE)
     return rc

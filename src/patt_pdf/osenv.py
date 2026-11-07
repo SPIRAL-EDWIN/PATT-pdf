@@ -51,7 +51,53 @@ def platform_info() -> dict:
         "utf8_mode": bool(sys.flags.utf8_mode),
         "stdout_encoding": getattr(sys.stdout, "encoding", None),
         "windows_long_paths_enabled": _windows_long_paths_enabled(),
+        "pth_strategy": pth_strategy(),
+        "pth_locale_encoding": _locale_text_encoding(),
+        "site_frozen": site_is_frozen(),
     }
+
+
+def pth_strategy() -> str:
+    """How this interpreter's site.py decodes .pth files: 'utf8-first' (CPython 3.13.0+ and the
+    3.12.4+ backport: UTF-8 first, locale encoding only as a fallback), 'locale' (older: locale
+    encoding only; on 3.11+ that encoding ignores UTF-8 Mode) or 'unknown'. Determined from the
+    running interpreter, not from its version number (distributions may patch site.py).
+
+    Reads the string constants of the *loaded* site.addpackage code object. Source inspection is
+    not used: on CPython 3.11+ release builds `site` is a frozen module (co_filename '<frozen site>'),
+    so inspect.getsource() fails, and the .py file on disk is not necessarily what runs."""
+    import site
+
+    def consts(co, depth=0):
+        for c in co.co_consts:
+            if isinstance(c, str):
+                yield c
+            elif hasattr(c, "co_consts") and depth < 4:
+                yield from consts(c, depth + 1)
+    try:
+        found = set(consts(site.addpackage.__code__))
+    except AttributeError:
+        return "unknown"
+    if "utf-8-sig" in found:
+        return "utf8-first"
+    return "locale" if "locale" in found else "unknown"
+
+
+def site_is_frozen() -> bool:
+    import site
+    try:
+        return site.addpackage.__code__.co_filename.startswith("<frozen")
+    except AttributeError:
+        return False
+
+
+def _locale_text_encoding() -> str:
+    """The encoding of io.TextIOWrapper(encoding="locale") – what an old-style site.py uses."""
+    import io
+    try:
+        return io.TextIOWrapper(io.BytesIO(), encoding="locale").encoding
+    except LookupError:
+        return "unknown"
 
 
 def install_warnings(package_file: str | None = None, info: dict | None = None) -> list[str]:
@@ -59,19 +105,30 @@ def install_warnings(package_file: str | None = None, info: dict | None = None) 
     info = info or platform_info()
     out = []
     pkg = str(package_file or Path(__file__).resolve())
-    loc = (info.get("locale_encoding") or "").lower().replace("-", "")
     try:
         pkg.encode("ascii")
         non_ascii = False
     except UnicodeEncodeError:
         non_ascii = True
-    py = tuple(int(x) for x in str(info.get("python", "3.13")).split(".")[:2])
-    if non_ascii and loc not in ("utf8", "cp65001") and not info.get("utf8_mode") and py < (3, 13):
-        out.append("PATT-PDF is installed from a folder with non-ASCII characters while the locale encoding is "
-                   f"{info.get('locale_encoding')}. Python 3.10-3.12 read the .pth file of an *editable* install "
-                   "(pip install -e) with the locale encoding, so the import can fail in other processes "
-                   "(3.13+ read it as UTF-8 first). Use a regular install (pip install .), an ASCII-only "
-                   "source folder, PYTHONUTF8=1, or Python 3.13+.")
+    strategy = info.get("pth_strategy") or pth_strategy()
+    loc = (info.get("pth_locale_encoding") or info.get("locale_encoding") or "").lower().replace("-", "")
+    if non_ascii and strategy != "utf8-first" and loc not in ("utf8", "cp65001"):
+        out.append("PATT-PDF is installed from a folder with non-ASCII characters, and this Python's site.py "
+                   f"reads .pth files with the locale encoding ({info.get('pth_locale_encoding') or info.get('locale_encoding')}"
+                   f"; strategy: {strategy}). An *editable* install (pip install -e) may then not be importable. "
+                   "Use a regular install (pip install .) or an ASCII-only source folder. PYTHONUTF8=1 is not a "
+                   "reliable fix: on Python 3.11+ it does not change the encoding site.py uses here. Python 3.12.4+ "
+                   "and 3.13+ normally read .pth files as UTF-8 first (verify with `patt-pdf doctor`).")
+    fs = (info.get("filesystem_encoding") or "utf-8").lower().replace("-", "")
+    if non_ascii and fs not in ("utf8", "mbcs"):
+        # Seen with real CPython 3.12.16 on Linux under zh_CN.GBK / en_US.CP1252 without UTF-8 Mode:
+        # site.py decodes the .pth correctly as UTF-8, but the folder name is then re-encoded with
+        # the file system encoding and no longer matches the UTF-8 name on disk. macOS and Windows
+        # always use UTF-8 here; this is a Linux legacy-locale case, and PYTHONUTF8=1 does fix it.
+        out.append(f"The Python file system encoding is {info.get('filesystem_encoding')} (a legacy locale "
+                   "without UTF-8 Mode). Non-ASCII folder names created as UTF-8, including this editable "
+                   "install's source folder, may not be found. Use a UTF-8 locale or set PYTHONUTF8=1 "
+                   "(which changes the file system encoding), or use an ASCII-only folder.")
     if info.get("os") == "windows" and info.get("windows_long_paths_enabled") is False:
         out.append("Windows LongPathsEnabled is off: paths of 260+ characters fail (also pip's build "
                    "folders). Use short folders such as C:\\patt, or \\\\?\\ extended paths.")
@@ -158,6 +215,11 @@ _WIN_START = re.compile(r"(?:\\\\\\\\\?\\\\(?:UNC\\\\)?|\\\\\?\\(?:UNC\\)?)?(?:[
 # ("https://h/a" – the "/" is preceded by ":" or "/"), fractions and "and/or" (no leading "/"
 # at a word boundary), a single segment such as "/x", and DOIs ("doi:10.1/x").
 _POSIX_START = re.compile(r"(?<![\w.:/\-~])(?:~(?=/))?/(?=[^/\s'\"<>|]+/[^\s'\"<>|])")
+# Single-segment root paths ("/privatefile.pdf") are ambiguous: "/help", "/etc", "1/2" are more often
+# prose or commands. They are redacted only when they look like a file, i.e. quoted as a whole
+# ('/name' or "/name"), or carrying a file extension (/name.ext) at a word boundary.
+_POSIX_ROOT_QUOTED = re.compile(r"(?<=['\"])/[^/\s'\"<>|]+(?=['\"])")
+_POSIX_ROOT_EXT = re.compile(r"(?<![\w.:/\-~>])/[^/\s'\"<>|]+\.[A-Za-z0-9]{1,5}(?=$|[\s'\",;:)\]])")
 
 
 def _norm(p: str) -> str:
@@ -231,7 +293,13 @@ def redact(msg: str, roots: dict[str, str | os.PathLike] | None = None) -> str:
             name = p.rstrip("/").split("/")[-1]
             repl = "<path>/" + name if name else "<path>"
         out.append(repl); i = j
-    return "".join(out)
+    s = "".join(out)
+
+    def _root(m):
+        return "<path>/" + m.group(0)[1:]
+    s = _POSIX_ROOT_QUOTED.sub(_root, s)
+    s = _POSIX_ROOT_EXT.sub(_root, s)
+    return s
 
 
 # ---------------------------------------------------------------- Windows long paths

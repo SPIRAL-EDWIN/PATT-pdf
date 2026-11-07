@@ -22,6 +22,19 @@ class OCRUnavailable(RuntimeError):
 OCR_TIMEOUT_S = float(os.environ.get("PATT_PDF_OCR_TIMEOUT", "120"))
 
 
+def ocr_dependency_problem() -> str | None:
+    """Why OCR cannot run here, or None. OpenCV is imported lazily by the OCR functions, so an
+    ImportError at module import time never happens; check it explicitly (it is missing e.g. on
+    Windows arm64, where opencv-python-headless publishes no wheel)."""
+    try:
+        import importlib
+        importlib.import_module("cv2")
+    except ImportError as e:
+        return (f"OCR dependencies missing ({e.name or 'cv2'}): install patt-pdf[ocr] "
+                "(opencv-python-headless has no wheel for some platforms, e.g. Windows arm64)")
+    return None
+
+
 def tesseract_cmd() -> str:
     """Tesseract executable (osenv.find_tesseract): $PATT_PDF_TESSERACT, else PATH, else the
     default install folders of the OS. Raises OCRUnavailable with the reason."""

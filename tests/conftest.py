@@ -2,8 +2,8 @@
 and a fake HTTP opener for DeepL logic. No network, no API quota."""
 from __future__ import annotations
 
+import importlib
 import os
-import importlib.util
 import shutil
 import sys
 from pathlib import Path
@@ -20,7 +20,11 @@ from patt_pdf.osenv import find_tesseract  # noqa: E402
 
 # same discovery as the product: PATT_PDF_TESSERACT, PATH, OS default install folders
 HAS_TESSERACT = find_tesseract()[0] is not None
-HAS_CV2 = importlib.util.find_spec("cv2") is not None
+try:                                     # an importable module, not just a findable one
+    importlib.import_module("cv2")      # import, not find_spec: a broken install counts as missing
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 HAS_OCR = HAS_TESSERACT and HAS_CV2
 needs_ocr = pytest.mark.skipif(not HAS_OCR, reason="tesseract CLI and opencv required")
 

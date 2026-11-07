@@ -56,10 +56,10 @@ def plan_page(pg, pno: int, ocr: bool = True) -> PagePlan:
     if kind in ("vector", "raster"):
         if not ocr:
             return PagePlan(pno, kind, [], [], [{"skipped": "ocr disabled"}])
-        try:
-            from .ocr import OCRUnavailable, plan_ocr_page
-        except ImportError as e:                   # opencv missing
-            return PagePlan(pno, kind, [], [], [{"skipped": f"OCR dependencies missing ({e.name}); install patt-pdf[ocr]"}])
+        from .ocr import OCRUnavailable, ocr_dependency_problem, plan_ocr_page
+        missing = ocr_dependency_problem()
+        if missing:                                # e.g. opencv not installed / no wheel for this CPU
+            return PagePlan(pno, kind, [], [], [{"skipped": missing}])
         try:
             return plan_ocr_page(pg, pno, kind)
         except OCRUnavailable as e:

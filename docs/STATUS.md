@@ -1,15 +1,34 @@
-# Status of v0.3.3.dev0 (2026-11-07): experimental, cross-platform test candidate
+# Status of v0.3.4.dev0 (2026-11-08): experimental, cross-platform test candidate
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.3.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.4.dev0` (a development pre-release, not a stable release).
 
-**The cross-platform stage is NOT complete.** Completion needs: v0.3.3 re-tested from a fresh install on the user's macOS and Windows machines (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`), and a first real CI run with logs.
+**The cross-platform stage is NOT complete.** Completion needs: this version re-tested from a fresh install on the user's macOS and Windows machines (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`), and a first real CI run with logs.
 
-**Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends.
+**Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends, on CPython 3.10.12 (Ubuntu) and on real python-build-standalone CPython 3.11.18 and 3.12.16 builds (§4).
 **Real-system evidence so far:**
 * v0.3.1 (`6b969b8`): full reviewer runs on macOS and Windows (§0b).
-* v0.3.2 (`30d7366`): an independent functional check on macOS arm64 / Python 3.12 (§0a). Not a fresh-install acceptance.
+* v0.3.2 (`30d7366`): an independent functional check on macOS arm64 / Python 3.12 (§0a).
+* v0.3.3 (`1897418`): an independent check on macOS arm64, Python 3.12.14 and 3.11.16 (§0). Not a fresh-install acceptance.
 
-**Not verified:** v0.3.3 on macOS or Windows; real-world PDFs; real DeepL calls; cp936/cp1252 Windows systems; Preview/Acrobat interaction; CI (written, never run).
+**Not verified:** v0.3.4 on macOS or Windows; real-world PDFs; real DeepL calls; cp936/cp1252 Windows systems; Preview/Acrobat interaction; CI (written, never run).
+
+## 0. Findings of the independent macOS check of `1897418` (v0.3.3.dev0), and what v0.3.4 changes
+
+macOS arm64, Python 3.12.14, PyMuPDF 1.28.2, CJK fonts, no Tesseract: **177 passed, 1 failed, 6 skipped**. A second check on Python 3.11.16 failed the same test. The encoding-warning fix and the `/custom/private/report.pdf` redaction passed. (Reviewer logs are private and not part of the repository.)
+
+| Finding | Root cause (verified) | v0.3.4 |
+|---|---|---|
+| `.pth` test on 3.12.14: `zh_CN.GBK` gave `found`, the test predicted `error` | The test inferred the `.pth` decoding from the version number (3.13+ = UTF-8 first). CPython **backported** UTF-8-first `.pth` reading to **3.12.4** (`Misc/NEWS.d/3.12.4.rst`: "site module now parses .pth file with UTF-8 first"). Checked in the tagged sources: v3.12.0–3.12.3 locale only; v3.12.4/.8/.10/.12/.14 and v3.13.0 UTF-8 first; v3.11.9–3.11.16 and v3.10.12 locale only. | The test asks the running interpreter which strategy its `site.addpackage` uses and predicts from the encodings the child process reports. |
+| Same test on 3.11.16: `PYTHONUTF8=1` still gave `UnicodeDecodeError`, the test expected `found` | Old `site.py` uses `TextIOWrapper(..., encoding="locale")`. On 3.11+ the "locale" encoding (`_Py_GetLocaleEncoding`) **ignores UTF-8 Mode**; on 3.10 it returned UTF-8 in UTF-8 Mode. So `PYTHONUTF8=1` changes the file system encoding but not `.pth` decoding on 3.11. | Prediction uses the reported "locale" text encoding, not `utf8_mode`. Warning text no longer recommends `PYTHONUTF8=1` for this case. |
+| (found in this round, on real 3.11.18/3.12.16) the strategy could not be detected: `inspect.getsource(site.addpackage)` raises `OSError` | In 3.11+ release builds `site` is a **frozen** module (`co_filename` is `<frozen site>`). The v0.3.3 detection and the first v0.3.4 draft read the source and would have crashed or returned `unknown`. Python.org/Homebrew macOS builds are expected to behave the same (not checked). | Detection reads the string constants of the *loaded* code object (`'utf-8-sig'` → UTF-8 first, `'locale'` → locale). Works frozen or not; cross-checked against the `site.py` file when readable. An `unknown` strategy now fails the test instead of passing silently. |
+| (found in this round) Linux legacy locale without UTF-8 Mode: an editable install fails even with 3.12.16 (`ModuleNotFoundError`) | The `.pth` line is decoded correctly as UTF-8, but the folder name is then re-encoded with the **file system encoding** (`gbk`/`cp1252`) and no longer matches the name on disk. Not applicable to macOS/Windows (file system encoding always UTF-8 there). | Prediction includes the file system encoding; `doctor` warns about it (and here `PYTHONUTF8=1` does help). |
+| (found in this round) `doctor` did not print `pth_strategy` although README said so | Missing keys in the printed list. | `doctor` prints `pth_strategy`, `pth_locale_encoding`, `site_frozen`; the test checks them. `opencv` is reported via a real import. |
+| (found in this round) the legacy-locale tests silently skipped as "no non-UTF-8 locale installed" when run from an editable install in a non-ASCII folder; and failed in a clean room whose venv path is non-ASCII (numpy could not load its own path under CP1252) | The locale probe child ran `site.py`, which aborted on the `.pth`; that was mistaken for a missing locale. The second case is the documented Linux legacy-locale file-name limit. | Locale probing uses `python -S`. The pipeline test excuses only these two documented limits (checked in a child, printed), and fails on anything else. Neither can apply on macOS/Windows (UTF-8 file system encoding). |
+| Retest prompts: `${PIPESTATUS[0]}` (bash-only, user shell is zsh); `py -3.12` (no py launcher on the user's Windows) | Prompt errors. | macOS: run in bash, `run` helper writes the log first and records the real exit code, no `tee`/`tail` after a tested command. Windows: detects `py`/`python`/`python3`, stops and asks when no suitable Python exists, `Run` helper. |
+| Windows arm64 CI job would install `[ocr]` | opencv-python-headless 5.0.0.93 has **no `win_arm64` wheel** on PyPI (checked 2026-11-07; PyMuPDF, numpy, Pillow, PyYAML do). | `windows-11-arm` job runs without `[ocr]` and verifies OCR is absent. A missing `cv2` is now `page_not_processed` with an install hint, not a planning error. |
+| Single-segment root paths such as `/privatefile` | Cannot be told apart from command options, URL paths or fractions in free text. | Redacted when quoted (`'/privatefile'`) or when it looks like a file (`/report.pdf`); unquoted `/privatefile`, `/help`, `1.2/3.4` stay. Redaction is **best-effort**: check reports before sharing. |
+
+**Product support boundary for editable installs from a non-ASCII folder** (regular installs are not affected): works where `site.py` reads `.pth` as UTF-8 first (CPython 3.12.4+, 3.13+) and the file system encoding is UTF-8 (always on macOS/Windows; on Linux only in a UTF-8 locale or UTF-8 Mode). With an older `site.py` it works only when the locale encoding is UTF-8. **Measured on Linux only**; macOS and Windows are predictions from the sources.
 
 ## 0a. Findings of the independent macOS check of `30d7366` (v0.3.2.dev0)
 
@@ -121,6 +140,45 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 4. Test results
 
+### v0.3.4.dev0, this environment (Linux aarch64 container)
+
+190 tests; pyflakes clean. Interpreters: Ubuntu CPython 3.10.12; python-build-standalone 20261026 CPython 3.11.18 and 3.12.16 (archives checked against the release SHA256SUMS; `site` frozen in both). numpy 2.2.6 and Pillow 12.3.0 wheels for 3.11/3.12 checked against PyPI SHA-256; PyMuPDF 1.28.2 and opencv-python-headless 5.0.0.93 are abi3 builds shared with 3.10; Tesseract 4.1.1 (eng). The source was copied to a folder named `源码 目录` (non-ASCII, space).
+
+| Run | Result | Skips |
+|---|---|---|
+| 3.10.12, dev tree, C.UTF-8, Tesseract, GBK/CP1252 locales generated | 189 passed, 1 skipped | Windows native lock |
+| 3.11.18, regular install (`pip install .`) | 189 passed, 1 skipped | Windows native lock |
+| 3.12.16, regular install | 189 passed, 1 skipped | Windows native lock |
+| 3.11.18, editable install from the non-ASCII folder | 188 passed, 2 skipped | Windows lock; legacy-locale pipeline test (only documented limits applied, each printed: non-UTF-8 file system encoding with non-ASCII paths, editable install not importable) |
+| clean room: bundle → clone into `复测 clean/`, venv there, regular install, 3.12.16 | 189 passed, 1 skipped | Windows lock (the CP1252 probe was excused and printed: venv path not representable in cp1252) |
+| 3.12.16, editable install from the non-ASCII folder | 189 passed, 1 skipped | Windows lock (the pipeline test passes: the probe child uses `PYTHONPATH`) |
+| 3.12.16, regular, `LC_ALL=zh_CN.GBK PYTHONUTF8=0` | 186 passed, 4 skipped | Windows lock; `.pth` test (parent already legacy); 2 × non-ASCII file names (POSIX legacy fs encoding) |
+| 3.11.18, regular, `LC_ALL=en_US.CP1252 PYTHONUTF8=0` | 186 passed, 4 skipped | same |
+| 3.11.18, regular, Tesseract hidden | 184 passed, 6 skipped | 5 × OCR, Windows lock |
+| 3.10.12, OpenCV hidden and no Tesseract | 179 passed, 6 skipped (earlier in this round) | 5 × OCR, Windows lock |
+
+**`.pth` observations** (`test_pth_decoding_matches_the_interpreters_own_rule`, real interpreters; each row is predicted = observed):
+
+| Python | strategy | locale | UTF-8 Mode | locale text enc. | fs enc. | result |
+|---|---|---|---|---|---|---|
+| 3.10.12 | locale | GBK / CP1252 | 0 | GBK / CP1252 | gbk / cp1252 | error |
+| 3.10.12 | locale | GBK / CP1252 | 1 | UTF-8 | utf-8 | found |
+| 3.11.18 | locale (frozen) | GBK / CP1252 | 0 and 1 | GBK / CP1252 | gbk/cp1252, utf-8 | error (UnicodeDecodeError) |
+| 3.12.16 | utf8-first (frozen) | GBK / CP1252 | 0 | GBK / CP1252 | gbk / cp1252 | missing |
+| 3.12.16 | utf8-first (frozen) | GBK / CP1252 | 1 | GBK / CP1252 | utf-8 | found |
+| all | – | C.UTF-8 | 0 and 1 | UTF-8 | utf-8 | found |
+
+**Editable vs regular install, real interpreters** (`import patt_pdf`; regular install always OK):
+
+| Python | C.UTF-8 | CP1252, Mode 0 / 1 | GBK, Mode 0 / 1 |
+|---|---|---|---|
+| 3.11.18 editable | OK | UnicodeDecodeError / UnicodeDecodeError | UnicodeDecodeError / UnicodeDecodeError |
+| 3.12.16 editable | OK | ModuleNotFoundError / OK | ModuleNotFoundError / OK |
+
+**The tests catch the old mistakes** (each mutation run on real 3.11.18 and 3.12.16): the v0.3.3 `.pth` test fails on both (reproduces the macOS failures); source-based strategy detection → fails (frozen `site`); prediction ignoring the fs encoding → fails; `doctor` without the fs-encoding warning → fails.
+
+**Not covered here:** Python 3.11.16 and 3.12.14 exactly (the reviewer's versions; 3.11.18/3.12.16 have the same `site.py` strategy per the tagged sources), Python 3.13, any macOS or Windows interpreter.
+
 ### v0.3.3.dev0, this environment (Linux aarch64 container, Python 3.10.12)
 
 184 tests; pyflakes clean. Python 3.11–3.13 could not be installed (no network in this environment).
@@ -175,12 +233,13 @@ Python 3.11–3.13 could **not** be installed here (no network in this environme
 | `windows-2025` | x64 |
 | `windows-11-arm` | arm64 |
 
-The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, plus a `PYTHONUTF8=0` encoding run in every job. It has **never run**; no result can be claimed from it. To run it, push the candidate to GitHub (Actions runs on push to `main`) or start it manually (`workflow_dispatch`), then keep the run URL and the JUnit artifacts. Hosted minutes are free for public repositories on standard runners. `windows-11-arm` may fail to install PyMuPDF/OpenCV if no arm64 wheels exist; that would be a finding, not a pass.
+The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, plus a `PYTHONUTF8=0` encoding run in every job. It has **never run**; no result can be claimed from it. To run it, push the candidate to GitHub (Actions runs on push to `main`) or start it manually (`workflow_dispatch`), then keep the run URL and the JUnit artifacts. Hosted minutes are free for public repositories on standard runners. `windows-11-arm` runs without `[ocr]` (no opencv `win_arm64` wheel; PyPI checked 2026-11-07); runner labels and action SHAs were checked against the published sources on 2026-11-07, but none of this is verified until a run exists. The YAML is only checked statically (`tests/test_ci_workflow.py`).
 
 ## 5. Not verified
 
-* **macOS:** v0.3.1 was run by a reviewer without Tesseract (see §0); v0.3.2 not re-run; OCR, Preview locks, cross-volume and signals untested. Checklist: `docs/testing/MACOS_CHECKLIST.md`.
-* **Windows:** v0.3.1 was run by a reviewer (see §0); v0.3.2 not re-run. Still untested: font directories, the `%APPDATA%` key location, the Tesseract default path, file locking, console code pages and the real ANSI code page (cp936/cp1252; only simulated with POSIX locales). Prompt: `docs/testing/WINDOWS_CODEX_PROMPT.md`.
+* **macOS:** v0.3.1–v0.3.3 checked by reviewers without Tesseract (§0, §0a, §0b); v0.3.4 not run; `.pth` behaviour of python.org/Homebrew builds is a prediction; OCR, Preview locks, cross-volume and signals untested. Prompt: `docs/testing/MACOS_RETEST_PROMPT.md`.
+* **Windows:** v0.3.1 was run by a reviewer (§0b); v0.3.2–v0.3.4 not re-run. Still untested: font directories, the `%APPDATA%` key location, the Tesseract default path, file locking, console code pages, the real ANSI code page (cp936/cp1252; only simulated with POSIX locales), editable installs, arm64. Prompt: `docs/testing/WINDOWS_RETEST_PROMPT.md`.
+* **Path redaction** is best-effort (pattern based). Unquoted single-segment root paths (`/privatefile`) and paths inside unusual quoting are kept. Check reports before sharing them.
 * **Real DeepL calls through v0.2/v0.3:** none made. The ledger, the meter and the billed-delta reporting have not been checked against the live API.
 * **Real-world PDFs:** the corpus contains only synthetic fixtures (14 files, 12 readable pages), and underline detection has only been tested on synthetic pages.
 * **General OCR accuracy:** two synthetic scans and one outlined page.
@@ -202,6 +261,7 @@ The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, 
 
 ## 7. Compatibility notes
 
+* v0.3.4: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`). `platform_info()`/`doctor` gained `pth_strategy`, `pth_locale_encoding`, `site_frozen`. A missing OpenCV during planning is a skipped page note (`page_not_processed`), not a planning error.
 * v0.3.3: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`); existing state directories stay valid. Error texts in state files now redact *all* absolute paths (`<path>/name`). `pyyaml` was added to the `dev` extra (CI-workflow check only).
 
 * `ENGINE_VERSION` is now `patt-0.3-e3` (v0.3.2), so existing state directories must be re-planned.
