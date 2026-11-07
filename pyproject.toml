@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "patt-pdf"
+version = "0.3.1.dev0"
+description = "PATT-PDF (experimental): position-aware EN→ZH translation of PDF pages that tries to keep figures, layout and graphics in place"
+readme = "README.md"
+requires-python = ">=3.10"
+# PyMuPDF is AGPL-3.0 (or commercial). This project is therefore distributed under AGPL-3.0-or-later.
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "PATT-PDF contributors" }]
+dependencies = [
+  "pymupdf>=1.24,<2",
+  "numpy>=1.24",
+  "fonttools>=4.40",
+]
+classifiers = [
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Topic :: Text Processing",
+]
+
+[project.optional-dependencies]
+ocr = ["opencv-python-headless>=4.8"]     # plus the Tesseract CLI on PATH
+dev = ["pytest>=7", "pyflakes>=3", "pillow>=9"]
+
+[project.scripts]
+patt-pdf = "patt_pdf.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["ocr: needs tesseract + opencv"]
