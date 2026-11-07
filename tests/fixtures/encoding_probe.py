@@ -60,7 +60,19 @@ def check(cond, msg):
         print("FAIL:", msg.encode("ascii", "backslashreplace").decode()); sys.exit(1)
 
 
+def _call_external():
+    """PATT_PROBE_CALL=module:function — call code outside the project before the pipeline
+    (tests use it to emit a real third-party EncodingWarning on Python 3.11+)."""
+    import importlib
+    import os
+    spec = os.environ.get("PATT_PROBE_CALL")
+    if spec:
+        mod, _, fn = spec.partition(":")
+        getattr(importlib.import_module(mod), fn)()
+
+
 def run():
+    _call_external()
     # MuPDF passes file names to the OS as UTF-8. Windows and macOS file systems are UTF-8 for
     # Python too; only a POSIX system with a legacy-locale file system encoding differs, and
     # there the non-ASCII file name is left out of this probe (documented limitation).

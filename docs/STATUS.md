@@ -1,12 +1,29 @@
-# Status of v0.3.2.dev0 (2026-11-07): experimental, cross-platform test candidate
+# Status of v0.3.3.dev0 (2026-11-07): experimental, cross-platform test candidate
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues from 0.3.1 and is `0.3.2.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.3.dev0` (a development pre-release, not a stable release).
+
+**The cross-platform stage is NOT complete.** Completion needs: v0.3.3 re-tested from a fresh install on the user's macOS and Windows machines (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`), and a first real CI run with logs.
 
 **Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends.
-**Real-system evidence:** the macOS and Windows reports below were produced on **v0.3.1.dev0** (`6b969b8`). v0.3.2 has **not** been re-run on macOS or Windows.
-**Not verified:** real-world PDFs, real DeepL calls, cp936/cp1252 Windows systems, Preview/Acrobat interaction, CI (written, not run).
+**Real-system evidence so far:**
+* v0.3.1 (`6b969b8`): full reviewer runs on macOS and Windows (§0b).
+* v0.3.2 (`30d7366`): an independent functional check on macOS arm64 / Python 3.12 (§0a). Not a fresh-install acceptance.
 
-## 0. Findings of the macOS and Windows runs of `6b969b8` (v0.3.1.dev0)
+**Not verified:** v0.3.3 on macOS or Windows; real-world PDFs; real DeepL calls; cp936/cp1252 Windows systems; Preview/Acrobat interaction; CI (written, never run).
+
+## 0a. Findings of the independent macOS check of `30d7366` (v0.3.2.dev0)
+
+macOS arm64, Python 3.12.14, PyMuPDF 1.28.2, CJK fonts present, no Tesseract: **153 passed, 2 failed, 6 skipped**. The 6 skips were 5 OCR tests and the Windows-only lock test. Codex's own review also found a redaction gap.
+
+| Finding | Root cause | Evidence | Status in v0.3.3 | Regression tests |
+|---|---|---|---|---|
+| `test_stdlib_encoding_warning_does_not_abort_probe` failed: probe printed OK but no `locale.py` | **Test helper defect (certain).** The helper made only `locale.getpreferredencoding()` warn. On Python ≥ 3.11 the probe calls `locale.getencoding()` instead, which never warns, so no stdlib warning appeared and the assertion had nothing to find. Python 3.10 has no `getencoding()`, so the Linux runs passed | Reproduced here by adding the 3.11+ API to Python 3.10: the old helper produced no stdlib warning; the new one produced it and the probe still passed | **Fixed.** The helper now wraps whichever locale query exists. A second test calls `locale.getpreferredencoding()` from third-party code, which on real 3.11+ CPython raises a *real* EncodingWarning; it must be listed, and the probe must still pass. The detection of project-code warnings is unchanged | `test_helper_covers_the_py311_api_even_on_older_python` (fails with the old helper), `test_real_third_party_encoding_warning_is_listed_not_failed`, `test_probe_detects_implicit_encoding_in_project_code` |
+| `test_pth_with_non_ascii_path_is_decoded_with_locale_encoding` failed: `LC_ALL=zh_CN.GBK PYTHONUTF8=0` found the package | **The test's assumption was wrong (certain); the macOS mechanism is inferred.** The old test assumed every legacy locale breaks a UTF-8 `.pth`. In CPython 3.10–3.12, `site.addpackage` decodes `.pth` files with the *locale* encoding, and 3.13+ decodes as UTF-8 first (checked in the CPython sources). The outcome depends on the encoding Python actually uses, which a locale name alone does not determine. Likely explanation for macOS (inferred, not measured, because the reviewer's log does not record it): the `zh_CN.GBK` locale did not set a GBK codeset, so locale text stayed UTF-8 | Linux 3.10: real GBK/CP1252 → `UnicodeDecodeError` (no import). A macOS-like emulation (locale text UTF-8, file system encoding legacy) → `missing`. Both match the new rule | **Test corrected.** The child reports its locale and file system encodings, and the expected result is computed from CPython's version-specific rule. `PYTHONUTF8=1` must always find the package. The child's encodings are printed so that a macOS rerun shows the real values. `doctor` now warns only on Python 3.10–3.12 | `test_pth_decoding_matches_cpython_rules`, `test_expected_pth_rule_is_version_aware`, `test_editable_install_warning_…` |
+| Same cause as the v0.3.1 macOS editable-import failure? | **Probably the same mechanism, not proven.** The v0.3.1 failure was Python 3.11 + `en_US.ISO8859-1` + an editable `.pth` pointing to a Chinese folder. Under the rule above, an ISO8859-1 decode gives a wrong path (`missing`), which matches the observed `ModuleNotFoundError`. The v0.3.2 test failure was a wrong expectation for a *different* locale on 3.12 | Python 3.11/3.12 and the macOS locale data could not be run here (no network) | **Pending macOS confirmation** (MACOS_RETEST_PROMPT M5) | — |
+| Redaction: `open failed: /custom/private/report.pdf` printed as-is | **Implementation gap (certain).** POSIX paths were recognised only under a fixed list of top-level folders | Reproduced through the CLI: plan error JSON, the CLI line and the report all contained the path | **Fixed.** Any absolute POSIX path with at least two segments, `~/…` and `file://` URLs are now redacted. URLs, fractions, `and/or`, dates, DOIs and single-segment `/x` are left alone. Exception texts are also redacted in page-level plan notes, OCR details, translate summaries and logs, publish reasons, and the top-level CLI error handler | 13 new parametrised cases; `test_custom_mount_path_never_reaches_cli_json_or_report` (CLI + every state JSON/JSONL + report, Windows escaped/UNC/extended forms included); `test_redaction_keeps_cli_messages_useful` |
+| CI used `macos-13`/`macos-14`, an unverified "no OCR" state, and `\|\| true` | Workflow defect | GitHub runner-images README, checked 2026-11-07: macOS 14 retired 2026-11-02 | **Workflow rewritten (not run):** `macos-15` (arm64), `macos-15-intel`, `ubuntu-24.04`/`-arm`, `windows-2025`, `windows-11-arm`. Actions are pinned to commit SHAs. `tools/ci_check_ocr.py` asserts OCR present+`eng` or absent, using the product's own discovery; no-OCR jobs also set `PATT_PDF_TESSERACT` to a missing file. Shells are explicit (bash default, pwsh only where needed). Windows fonts come from a pinned noto-cjk commit and are checked against git blob SHAs | `tests/test_ci_workflow.py` (labels, pinning, permissions, OCR verification, shell syntax) |
+
+## 0b. Findings of the macOS and Windows runs of `6b969b8` (v0.3.1.dev0)
 
 Sources: reviewer reports for macOS 27.2 arm64 (Python 3.11.16, no Tesseract) and Windows 11 x64 (Python 3.12.10, Tesseract 5.5.3, ACP 65001). Each item was re-checked against the logs and reproduced here where the environment allowed.
 
@@ -104,6 +121,23 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 4. Test results
 
+### v0.3.3.dev0, this environment (Linux aarch64 container, Python 3.10.12)
+
+184 tests; pyflakes clean. Python 3.11–3.13 could not be installed (no network in this environment).
+
+| Run | Result | Skips |
+|---|---|---|
+| PyMuPDF 1.28.2, C.UTF-8, Tesseract, PyYAML, GBK/CP1252 locales generated | 183 passed, 1 skipped | Windows native lock |
+| Tesseract hidden, no PyYAML | 173 passed, 7 skipped | 5 × OCR, PyYAML, Windows lock |
+| `LC_ALL=zh_CN.GBK PYTHONUTF8=0` | 180 passed, 4 skipped | 2 × non-ASCII file names (POSIX legacy fs encoding), `.pth` test (parent already legacy), Windows lock |
+| `LC_ALL=en_US.CP1252 PYTHONUTF8=0` | 180 passed, 4 skipped | same |
+| PyMuPDF 1.25.2 | 183 passed, 1 skipped | Windows lock |
+| no CJK fonts | 114 passed, 70 skipped | font-dependent tests |
+
+### v0.3.2.dev0 independent check on macOS (Codex, before these fixes)
+
+macOS arm64, Python 3.12.14: 153 passed, 2 failed, 6 skipped (fonts, no Tesseract). Without fonts: 92 passed, 1 failed, 68 skipped.
+
 ### v0.3.2.dev0, this environment (Linux aarch64 container, Python 3.10.12)
 
 Dependencies: numpy 2.2.6, fontTools 4.65.0, opencv-python-headless 5.0.0.93, Pillow 12.3.0, pytest 9.2.0, pyflakes 4.0.3, Tesseract 4.1.1 (eng). The suite has 161 tests. `pyflakes src tests`: clean.
@@ -130,7 +164,18 @@ Python 3.11–3.13 could **not** be installed here (no network in this environme
 
 ### CI
 
-`.github/workflows/tests.yml` defines Linux x64/arm64, macOS arm64/x64 and Windows x64 jobs (Python 3.10–3.13, with and without Tesseract, plus a `PYTHONUTF8=0` encoding run on Windows). It has **never run**; no result can be claimed from it.
+`.github/workflows/tests.yml` defines 10 jobs:
+
+| Runner | CPU |
+|---|---|
+| `ubuntu-24.04` | x64 |
+| `ubuntu-24.04-arm` | arm64 |
+| `macos-15` | arm64 |
+| `macos-15-intel` | x64 |
+| `windows-2025` | x64 |
+| `windows-11-arm` | arm64 |
+
+The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, plus a `PYTHONUTF8=0` encoding run in every job. It has **never run**; no result can be claimed from it. To run it, push the candidate to GitHub (Actions runs on push to `main`) or start it manually (`workflow_dispatch`), then keep the run URL and the JUnit artifacts. Hosted minutes are free for public repositories on standard runners. `windows-11-arm` may fail to install PyMuPDF/OpenCV if no arm64 wheels exist; that would be a finding, not a pass.
 
 ## 5. Not verified
 
@@ -156,6 +201,8 @@ Python 3.11–3.13 could **not** be installed here (no network in this environme
 * **AGPL:** PyMuPDF is AGPL-3.0 or commercial. Obligations depend on how PATT-PDF is distributed or deployed; this is not legal advice.
 
 ## 7. Compatibility notes
+
+* v0.3.3: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`); existing state directories stay valid. Error texts in state files now redact *all* absolute paths (`<path>/name`). `pyyaml` was added to the `dev` extra (CI-workflow check only).
 
 * `ENGINE_VERSION` is now `patt-0.3-e3` (v0.3.2), so existing state directories must be re-planned.
 * QA files of failed renders gain `error_kind`; error messages use `<input>/…`, `<state>/…`, `<path>/name`.

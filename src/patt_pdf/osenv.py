@@ -65,11 +65,13 @@ def install_warnings(package_file: str | None = None, info: dict | None = None) 
         non_ascii = False
     except UnicodeEncodeError:
         non_ascii = True
-    if non_ascii and loc not in ("utf8", "cp65001") and not info.get("utf8_mode"):
+    py = tuple(int(x) for x in str(info.get("python", "3.13")).split(".")[:2])
+    if non_ascii and loc not in ("utf8", "cp65001") and not info.get("utf8_mode") and py < (3, 13):
         out.append("PATT-PDF is installed from a folder with non-ASCII characters while the locale encoding is "
-                   f"{info.get('locale_encoding')}. Python reads the .pth file of an *editable* install "
-                   "(pip install -e) with the locale encoding, so the import can fail in other processes. "
-                   "Use a regular install (pip install .), an ASCII-only source folder, or set PYTHONUTF8=1.")
+                   f"{info.get('locale_encoding')}. Python 3.10-3.12 read the .pth file of an *editable* install "
+                   "(pip install -e) with the locale encoding, so the import can fail in other processes "
+                   "(3.13+ read it as UTF-8 first). Use a regular install (pip install .), an ASCII-only "
+                   "source folder, PYTHONUTF8=1, or Python 3.13+.")
     if info.get("os") == "windows" and info.get("windows_long_paths_enabled") is False:
         out.append("Windows LongPathsEnabled is off: paths of 260+ characters fail (also pip's build "
                    "folders). Use short folders such as C:\\patt, or \\\\?\\ extended paths.")
@@ -151,7 +153,11 @@ def find_tesseract(env: dict | None = None, os_name: str | None = None) -> tuple
 # (C:\\\\a), with forward slashes (C:/a), extended (\\?\\C:\\a) or UNC (\\\\host\\share).
 _STOP = "'\"\r\n<>|*?"
 _WIN_START = re.compile(r"(?:\\\\\\\\\?\\\\(?:UNC\\\\)?|\\\\\?\\(?:UNC\\)?)?(?:[A-Za-z]:[\\/]|\\\\\\\\(?=\w)|\\\\(?=\w)|(?<=UNC\\)(?=\w)|(?<=UNC\\\\)(?=\w))")
-_POSIX_START = re.compile(r"(?<![\w.:/])/(?=(?:Users|home|root|private|var|tmp|mnt|media|Volumes|sessions|opt|srv|data)/)")
+# Any absolute POSIX path with at least two segments ("/a/b"), not only well-known top-level
+# folders (custom mounts such as /custom/private/x.pdf were missed before). Not matched: URLs
+# ("https://h/a" – the "/" is preceded by ":" or "/"), fractions and "and/or" (no leading "/"
+# at a word boundary), a single segment such as "/x", and DOIs ("doi:10.1/x").
+_POSIX_START = re.compile(r"(?<![\w.:/\-~])(?:~(?=/))?/(?=[^/\s'\"<>|]+/[^\s'\"<>|])")
 
 
 def _norm(p: str) -> str:
@@ -199,6 +205,10 @@ def redact(msg: str, roots: dict[str, str | os.PathLike] | None = None) -> str:
     to `/`. Relative names inside the input folder are the user's own file names and are kept
     on purpose (README, privacy)."""
     s = str(msg)
+    # file:// URLs carry local paths: reduce them to the plain path first ("file:///C:/a" too)
+    s = re.sub(r"file:///(?=[A-Za-z]:/)", "", s)          # file:///C:/a  -> C:/a
+    s = re.sub(r"file://(?=/)", "", s)                     # file:///etc/a -> /etc/a
+    s = re.sub(r"file://(?=[^/\s])", r"\\\\", s)          # file://host/a -> \\host/a (UNC)
     known = []
     for label, root in (roots or {}).items():
         if root:

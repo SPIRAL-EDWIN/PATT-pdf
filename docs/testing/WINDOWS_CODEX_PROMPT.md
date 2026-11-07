@@ -1,6 +1,6 @@
-# 给 Windows 电脑上 Codex 的完整提示词：PATT-PDF v0.3.2.dev0 Windows 验证
+# 给 Windows 电脑上 Codex 的完整提示词：PATT-PDF Windows 验证（v0.3.2 版，已由 WINDOWS_RETEST_PROMPT.md 取代）
 
-> **只复测上一轮发现的问题时，请改用 `docs/testing/RETEST_V0.3.2.md`。**本文件用于完整的从零验证。
+> **请优先使用 `docs/testing/WINDOWS_RETEST_PROMPT.md`（v0.3.3）。**本文件保留作 v0.3.2 时的完整清单参考，其中的版本号和测试数量已经过时。
 
 > 用法：把本文件全文复制给 Windows 上的 Codex。
 >

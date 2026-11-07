@@ -232,6 +232,17 @@ def _no_paths(ws: Workspace, msg: str) -> str:
     return redact(msg, {"<input>": ws.src if ws.src.is_dir() else ws.src.parent, "<state>": ws.state})
 
 
+def _scrub_notes(ws: Workspace, notes):
+    """Redact strings inside plan notes (nested dicts/lists) before they are stored."""
+    if isinstance(notes, str):
+        return _no_paths(ws, notes)
+    if isinstance(notes, list):
+        return [_scrub_notes(ws, n) for n in notes]
+    if isinstance(notes, dict):
+        return {k: _scrub_notes(ws, v) for k, v in notes.items()}
+    return notes
+
+
 def _plan_error(ws: Workspace, rel: str, msg: str) -> dict:
     st = {"rel": rel, "status": "error", "error": _no_paths(ws, msg)}
     atomic_write_text(ws.error_path(rel), json.dumps(st, ensure_ascii=False))
@@ -280,8 +291,9 @@ def plan_file(ws: Workspace, rel: str, ocr: bool = True, deadline: float | None 
             if repaired:
                 pl["notes"].append({"source_repaired": True})
         except Exception as e:
-            pl = asdict(PagePlan(pno, "error", [], [], [{"error": f"{type(e).__name__}: {e}"[:300]}]))
+            pl = asdict(PagePlan(pno, "error", [], [], [{"error": _no_paths(ws, f"{type(e).__name__}: {e}")[:300]}]))
             failed.append(pno + 1)
+        pl["notes"] = _scrub_notes(ws, pl.get("notes", []))       # OCR errors etc. may quote local paths
         atomic_write_text(f, json.dumps({"sha": sha, "engine": ENGINE_VERSION, "ocr": ocr, "plan": pl}, ensure_ascii=False))
         pages.append(pl)
     doc.close()
@@ -379,7 +391,7 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
     try:
         backend.prepare()                      # e.g. create the DeepL glossary: after budget checks only
     except (QuotaExceeded, AuthError, BackendError) as e:
-        summary["stopped"] = f"backend setup failed: {e}"; summary["outcome"] = "failed"
+        summary["stopped"] = _no_paths(ws, f"backend setup failed: {e}"); summary["outcome"] = "failed"
         return _log_run(ws, summary)
     batches, cur, cc = [], [], 0
     for s in est["texts"]:
@@ -422,16 +434,16 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
                     stop.set(); continue
                 except (QuotaExceeded, AuthError) as e:
                     with lock:
-                        summary["stopped"] = summary["stopped"] or str(e); summary["batches_failed"] += 1
+                        summary["stopped"] = summary["stopped"] or _no_paths(ws, str(e)); summary["batches_failed"] += 1
                     stop.set(); continue
                 except BackendError as e:
                     summary["batches_failed"] += 1
                     if not meter.attempts: summary["possibly_billed_chars"] += chars   # unmetered backend
-                    log(f"batch failed (will be retried on the next run): {e}"); continue
+                    log(_no_paths(ws, f"batch failed (will be retried on the next run): {e}")); continue
                 except Exception as e:                        # unexpected: treat like a failed request
                     summary["batches_failed"] += 1
                     if not meter.attempts: summary["possibly_billed_chars"] += chars
-                    log(f"batch failed unexpectedly: {type(e).__name__}: {e}"); continue
+                    log(_no_paths(ws, f"batch failed unexpectedly: {type(e).__name__}: {e}")); continue
                 summary["batches_completed"] += 1
                 for s, t in zip(b, res):
                     if t is None:
@@ -592,7 +604,7 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
                         except (OCRUnavailable, ImportError) as e:      # OCR needed for this check only
                             pq["residual_en"] = None
                             pq["issues"].append({"issue": "residual_check_skipped",
-                                                 "detail": f"OCR unavailable: {e}"[:200]})
+                                                 "detail": _no_paths(ws, f"OCR unavailable: {e}")[:200]})
                     else:
                         pq["residual_en"] = None; pq["issues"].append({"issue": "residual_check_skipped"})
                 if pq["residual_en"] and len(pq["residual_en"]) > 3:
@@ -675,6 +687,6 @@ def publish(ws: Workspace, files: list[str], dest: str | os.PathLike, min_status
         except OSError as e:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-            out.append({"rel": rel, "published": False, "why": str(e)}); continue
+            out.append({"rel": rel, "published": False, "why": _no_paths(ws, str(e))}); continue
         out.append({"rel": rel, "published": True, "to": str(target), "status": status})
     return out

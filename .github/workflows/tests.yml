@@ -1,11 +1,19 @@
-# Offline test matrix for PATT-PDF (Linux, macOS, Windows; x64 and arm64 where GitHub offers
-# hosted runners). No secrets, no translation API: tests use synthetic PDFs and fake backends.
+# Offline test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual
+# backends only. Status: NOT RUN YET. No result may be claimed until a run log exists.
 #
-# Status: written for v0.3.2.dev0 but NOT RUN yet (the repository had no workflow when this file
-# was added). Treat every job as unverified until a run log exists.
+# Runner labels were checked on 2026-11-07 against github.com/actions/runner-images (README
+# "Available Images"): macOS 14 images were retired from GitHub Actions on 2026-11-02 (issue
+# #13518 / #15226), so macos-13/macos-14 are no longer used.
+#   ubuntu-24.04      x64    | ubuntu-24.04-arm   arm64
+#   macos-15          arm64  | macos-15-intel     x64 (Intel label, standard runner)
+#   windows-2025      x64    | windows-11-arm     arm64 (Windows 11 Arm64 image)
+# Hosted minutes for public repositories are free on standard runners; private repositories are
+# billed per minute (macOS and Windows at higher multipliers): check your plan before enabling.
 #
-# Actions used (first-party, GitHub-maintained, MIT): actions/checkout@v4, actions/setup-python@v5,
-# actions/upload-artifact@v4. Pin to a commit SHA before enabling on a fork you do not control.
+# Actions (first-party, MIT), pinned to the commit of the release tag, checked 2026-11-07:
+#   actions/checkout        v7.0.1  3d3c42e5aac5ba805825da76410c181273ba90b1
+#   actions/setup-python    v7.1.0  6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+#   actions/upload-artifact v7.0.2  cf430e030ddbb5b0abf93d22962f4752f3646cd9
 name: tests
 
 on:
@@ -15,7 +23,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read            # read-only token; the workflow writes nothing to the repository
+  contents: read            # read-only token; nothing is written to the repository
 
 concurrency:
   group: tests-${{ github.ref }}
@@ -23,53 +31,71 @@ concurrency:
 
 jobs:
   test:
-    name: ${{ matrix.os }} / py${{ matrix.python }} / ocr=${{ matrix.ocr }}
+    name: ${{ matrix.os }} py${{ matrix.python }} ocr=${{ matrix.ocr }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04: x64, ubuntu-24.04-arm: arm64, macos-14: arm64, macos-13: x64,
-        # windows-2022: x64 (no hosted Windows arm64 runner is assumed here)
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-13, windows-2022]
-        python: ["3.10", "3.12"]
-        ocr: [true]
         include:
-          - {os: ubuntu-24.04, python: "3.13", ocr: true}
-          - {os: ubuntu-24.04, python: "3.12", ocr: false}
-          - {os: windows-2022, python: "3.12", ocr: false}
-          - {os: macos-14, python: "3.11", ocr: false}
+          # with OCR (Tesseract + eng), one per OS/CPU
+          - {os: ubuntu-24.04,     python: "3.12", ocr: true}
+          - {os: ubuntu-24.04-arm, python: "3.12", ocr: true}
+          - {os: macos-15,         python: "3.12", ocr: true}
+          - {os: macos-15-intel,   python: "3.11", ocr: true}
+          - {os: windows-2025,     python: "3.12", ocr: true}
+          # without OCR: Tesseract must be verifiably absent (see "Verify OCR state")
+          - {os: ubuntu-24.04,     python: "3.10", ocr: false}
+          - {os: macos-15,         python: "3.11", ocr: false}
+          - {os: windows-2025,     python: "3.13", ocr: false}
+          - {os: windows-11-arm,   python: "3.12", ocr: false}   # PyMuPDF/OpenCV arm64 wheels: unverified
+          # newest Python on Linux (.pth decoding changed in 3.13)
+          - {os: ubuntu-24.04,     python: "3.13", ocr: true}
     env:
       PYTHONDONTWRITEBYTECODE: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    defaults:
+      run:
+        shell: bash                # same shell on all runners (Git Bash on Windows) unless stated
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+          cache-dependency-path: pyproject.toml
 
-      # ---- fonts: Noto CJK SC (SIL OFL 1.1) from the OS package manager / Homebrew; on Windows
-      #      from the official notofonts/noto-cjk release (static OTF), into a job-local folder
+      # ---- fonts: Noto CJK SC (SIL OFL 1.1), never installed into system folders by PATT-PDF
       - name: Fonts (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: Fonts (macOS)
         if: runner.os == 'macOS'
-        run: brew install --cask font-noto-sans-cjk-sc font-noto-serif-cjk-sc || brew install --cask font-noto-sans-cjk font-noto-serif-cjk
-      - name: Fonts (Windows)
+        run: brew install --cask font-noto-sans-cjk font-noto-serif-cjk   # casks pin release SHA-256
+      - name: Fonts (Windows, job-local folder; pinned noto-cjk commit, git blob SHA checked)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $d = "$env:RUNNER_TEMP\noto"; New-Item -ItemType Directory $d | Out-Null
-          $base = "https://github.com/notofonts/noto-cjk/raw/main"
-          foreach ($f in "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf","Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
-                         "Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf","Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Bold.otf") {
-            Invoke-WebRequest "$base/$f" -OutFile (Join-Path $d (Split-Path $f -Leaf))
+          $ErrorActionPreference = 'Stop'
+          $commit = 'f8d157532fbfaeda587e826d4cd5b21a49186f7c'   # notofonts/noto-cjk main, checked 2026-11-07
+          $files = @{
+            'Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf'   = 'dc15562470b4f842321894787a0d066879ccff8b'
+            'Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf'      = 'ff4c0450e8a5bf0290fbb6013a72dc61a10e8e56'
+            'Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf' = 'cba8a4783cc38574ac7cda52cae7d9b4241c07a5'
+            'Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Bold.otf'    = 'f1bd9c86c5765f3358815fb84b19003fd5711747'
+          }
+          $d = Join-Path $env:RUNNER_TEMP 'noto'; New-Item -ItemType Directory -Force $d | Out-Null
+          foreach ($f in $files.Keys) {
+            $out = Join-Path $d (Split-Path $f -Leaf)
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/notofonts/noto-cjk/$commit/$f" -OutFile $out
+            $blob = (git hash-object $out).Trim()                # git blob SHA-1 of the file content
+            if ($blob -ne $files[$f]) { throw "checksum mismatch for $f ($blob)" }
           }
           "PATT_PDF_FONT_SOURCE=$d" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
-      # ---- Tesseract (Apache-2.0) with English data, only for ocr=true jobs
+      # ---- Tesseract (Apache-2.0) + English model, only for ocr=true
       - name: Tesseract (Linux)
         if: matrix.ocr && runner.os == 'Linux'
         run: sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
@@ -80,26 +106,38 @@ jobs:
         if: matrix.ocr && runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           choco install tesseract -y --no-progress
-          "PATT_PDF_TESSERACT=C:\Program Files\Tesseract-OCR\tesseract.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $exe = 'C:\Program Files\Tesseract-OCR\tesseract.exe'
+          if (-not (Test-Path $exe)) { throw "tesseract.exe not found after install" }
+          "PATT_PDF_TESSERACT=$exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Hide any preinstalled Tesseract (ocr=false)
+        if: ${{ !matrix.ocr }}
+        run: |
+          # PATT_PDF_TESSERACT pointing to a missing file makes PATT-PDF report "not found" and
+          # never fall back to another installation (osenv.find_tesseract); verified next step.
+          echo "PATT_PDF_TESSERACT=$RUNNER_TEMP/no-tesseract-here" >> "$GITHUB_ENV"
 
       - name: Install (regular, non-editable)
         run: python -m pip install ".[ocr,dev]"
+      - name: Verify OCR state
+        run: python tools/ci_check_ocr.py ${{ matrix.ocr && 'expect-present' || 'expect-absent' }}
       - name: Environment report
         run: |
+          python -c "import platform,sys; print(platform.platform(), platform.machine(), sys.version)"
           patt-pdf --version
           patt-pdf fonts
-          patt-pdf doctor || true
+          rc=0; patt-pdf doctor || rc=$?
+          echo "doctor exit code: $rc (2 = warnings such as missing fonts; informational here)"
       - name: Lint
-        run: python -m pyflakes src tests
+        run: python -m pyflakes src tests tools
       - name: Tests
         run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit.xml
-      - name: Tests with UTF-8 mode off (platform default encoding)
-        if: runner.os == 'Windows'
+      - name: Encoding tests with UTF-8 mode off
         env:
           PYTHONUTF8: "0"
         run: python -m pytest -q -p no:cacheprovider -rA tests/test_encoding.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         if: always()
         with:
           name: junit-${{ matrix.os }}-py${{ matrix.python }}-ocr${{ matrix.ocr }}

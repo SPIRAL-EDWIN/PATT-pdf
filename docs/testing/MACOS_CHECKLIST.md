@@ -1,6 +1,6 @@
 # PATT-PDF macOS verification checklist (for Codex)
 
-**Purpose:** verify the experimental v0.3.2.dev0 candidate on macOS from a clean install. For a retest of the v0.3.1 findings only, use `docs/testing/RETEST_V0.3.2.md` instead.
+**Superseded:** use `docs/testing/MACOS_RETEST_PROMPT.md` (v0.3.3). This checklist is kept as the v0.3.2 reference; its version and test counts are out of date.
 The candidate has only been tested on Linux aarch64 so far.
 
 **Reporting:** mark every item PASS / FAIL / SKIP with evidence. Do not mark anything as passed that you did not run.

@@ -348,7 +348,10 @@ def main(argv=None):
     except SystemExit as e:
         print(e, file=sys.stderr); return EXIT_ERROR
     except Exception as e:                      # keep messages short; never print secrets
-        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        from .osenv import redact
+        roots = {"<input>": os.path.abspath(a.src) if getattr(a, "src", None) else "",
+                 "<state>": os.path.abspath(a.state) if getattr(a, "state", None) else ""}
+        print(redact(f"error: {type(e).__name__}: {e}", roots), file=sys.stderr)
         return EXIT_ERROR
 
 

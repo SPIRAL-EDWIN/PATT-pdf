@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patt-pdf"
-version = "0.3.2.dev0"
+version = "0.3.3.dev0"
 description = "PATT-PDF (experimental): position-aware EN→ZH translation of PDF pages that tries to keep figures, layout and graphics in place"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,7 +24,7 @@ classifiers = [
 
 [project.optional-dependencies]
 ocr = ["opencv-python-headless>=4.8"]     # plus the Tesseract CLI on PATH
-dev = ["pytest>=7", "pyflakes>=3", "pillow>=9"]
+dev = ["pytest>=7", "pyflakes>=3", "pillow>=9", "pyyaml>=6"]   # pyyaml: CI-workflow check only
 
 [project.scripts]
 patt-pdf = "patt_pdf.cli:main"

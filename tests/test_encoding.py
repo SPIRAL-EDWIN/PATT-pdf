@@ -143,13 +143,43 @@ def test_probe_detects_implicit_encoding_in_project_code(fonts_ready, monkeypatc
 
 
 def test_stdlib_encoding_warning_does_not_abort_probe(fonts_ready):
-    """W01 / macOS: on Python 3.11+ locale.getpreferredencoding() itself warns. Simulated here on
-    every Python version with a sitecustomize helper; the probe must still run the pipeline."""
+    """W01 / macOS: a warning raised inside the standard library must be reported, not fail the
+    probe. Simulated on every Python version: the helper patches whichever locale query the probe
+    uses (getpreferredencoding on 3.10, getencoding on 3.11+)."""
     helper = ROOT / "tests" / "fixtures" / "py311_locale_warning"
     rc, out = _run_probe({"PYTHONPATH": os.pathsep.join([str(helper), str(ROOT / "src")] + [p for p in sys.path if p])},
                          fonts_ready)
     assert rc == 0 and "OK" in out, out[-3000:]
     assert "locale.py" in out                                   # the stdlib warning is reported, not hidden
+
+
+def test_helper_covers_the_py311_api_even_on_older_python(fonts_ready, tmp_path):
+    """Regression for the macOS/Python 3.12 failure of v0.3.2: the helper patched only
+    getpreferredencoding(), but on 3.11+ the probe calls getencoding(), so no warning appeared.
+    Here the 3.11+ API is provided on any version and the helper must still be effective."""
+    helper = ROOT / "tests" / "fixtures" / "py311_locale_warning" / "sitecustomize.py"
+    combo = tmp_path / "combo"; combo.mkdir()
+    (combo / "sitecustomize.py").write_text(
+        "import locale\n"
+        "if not hasattr(locale, 'getencoding'):\n"
+        "    _o = locale.getpreferredencoding\n"
+        "    locale.getencoding = lambda: _o(False)\n\n" + helper.read_text(encoding="utf-8"), encoding="utf-8")
+    rc, out = _run_probe({"PYTHONPATH": os.pathsep.join([str(combo), str(ROOT / "src")] + [p for p in sys.path if p])},
+                         fonts_ready)
+    assert rc == 0 and "OK" in out and "locale.py" in out, out[-3000:]
+
+
+def test_real_third_party_encoding_warning_is_listed_not_failed(fonts_ready, tmp_path):
+    """Not simulated: code outside the project calls locale.getpreferredencoding(). On Python
+    3.11+ CPython itself emits EncodingWarning (attributed to the caller); the probe must list it
+    and still pass. On 3.10 no warning exists; the probe must simply pass."""
+    (tmp_path / "thirdparty_enc.py").write_text(
+        "import locale\n\ndef call():\n    return locale.getpreferredencoding(False)\n", encoding="utf-8")
+    rc, out = _run_probe({"PYTHONPATH": os.pathsep.join([str(tmp_path), str(ROOT / "src")] + [p for p in sys.path if p]),
+                          "PATT_PROBE_CALL": "thirdparty_enc:call"}, fonts_ready)
+    assert rc == 0 and "OK" in out, out[-3000:]
+    if sys.version_info >= (3, 11):
+        assert "thirdparty_enc.py" in out, out[-1500:]
 
 
 def test_probe_does_not_fail_on_stdlib_warnings(monkeypatch):
