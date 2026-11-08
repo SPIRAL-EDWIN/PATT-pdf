@@ -1,4 +1,4 @@
-# 给 Windows 上 Codex 的完整复测提示词：PATT-PDF v0.3.5.dev0
+# 给 Windows 上 Codex 的完整复测提示词：PATT-PDF v0.3.6.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -11,14 +11,15 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.5.dev0，实验性开发版，不是稳定版。本版只在 Linux 上测试过；**从未在 Windows 上运行过**（CI 和实机都没有）。
+- **版本：**v0.3.6.dev0，实验性开发版，不是稳定版。本版只在 Linux 上测试过；**从未在 Windows 上运行过**（CI 和实机都没有）。
 - **三类证据，报告中必须分开写，不能互相替代：**
-  1. **GitHub 云端 CI**：在 GitHub 提供的 Windows 云端机器上运行，不是用户的电脑。v0.3.4（`ca38a93`，run 42396678823）的结果是：Windows Server 2025 x64（3.12、3.13）和 Windows 11 ARM64（3.12），系统代码页 cp1252，3 个任务各有 5 项失败，其余通过或按设计跳过；v0.3.5 的修复**尚未在 CI 运行**。
+  1. **GitHub 云端 CI**：GitHub 的 Windows 云端机器，不是用户的电脑。上一版 v0.3.5（`07ed2df`，run 42459411475）10/10 个任务通过，Windows 部分：Windows Server 2025 x64（3.12 有 OCR、3.13 无 OCR）和 Windows 11 ARM64（3.12 无 OCR），代码页 cp1252，临时目录是纯英文路径。v0.3.6 **尚未在 CI 运行**。
   2. **本次在用户 Windows 电脑上的实测**：只有你亲手运行、有日志的项目才算。
-  3. **模拟和跳过**：Linux/macOS 上的模拟、pytest 中的模拟测试、SKIP 项，都不等于 Windows 实测。
-- **CI 发现的两个问题（v0.3.5 已修复，需要你在实机上确认）：**
-  - **C1 控制台编码：**输出被重定向（管道、`> 文件`、`*>`、`Tee-Object`）且系统代码页不是 UTF-8 时，Windows 上 Python 的 stdout 默认错误处理是 `surrogateescape`。v0.3.4 在打印 `报告 2026 – résumé.pdf` 这类文件名时会以 `UnicodeEncodeError: 'charmap'` 退出。直接在控制台窗口里显示时不受影响（控制台 I/O 总是 UTF-8）。
-  - **C2 字体路径测试：**在 Windows 上模拟 macOS/Linux 字体目录时，用了 Windows 的路径规则，只是测试问题，不影响真实使用。
+  3. **模拟和跳过**：pytest 中的模拟测试、SKIP 项，都不等于实测。
+- **上一轮（v0.3.5，本机）结果与 v0.3.6 的处理，需要你逐项确认：**
+  - **R01**：`test_pipeline_with_windows_like_piped_console` 失败。原因是**测试工具** `make_fixtures.py` 在 cp1252 管道下打印含中文的测试目录时出错，还没进入 CLI（CLI 本身的 E1b 通过）。v0.3.6：生成器改为转义输出；探针在生成器失败时以 exit 3 报告“fixture generator (before any CLI call)”；端到端测试改用中文临时目录，并断言确实进入了 CLI 阶段。
+  - **R02**：首次普通安装在深目录中失败（pip 临时路径过长，之后又遇到残留的 build 目录）。根因没有唯一定论（Windows 路径上限、pip 构建路径、残留状态共同作用）。v0.3.6：新增 `tools/install_check.py`，只读诊断，把源码干净复制到一个**新的**短目录后再安装，不删除任何东西。
+  - **包装器**：上一版提示词里的 `Run` 在只有一个参数时会把字符串逐字符拆开。v0.3.6 改用仓库中的 `tools/run_logged.ps1`，并附自测 `tools/test_run_logged.ps1`（在 Linux 上的 PowerShell 7.6.9 通过，未在 Windows 上运行）。
 - **上一轮 Windows 实测（v0.3.1，`6b969b8`）发现的问题。**这些在 v0.3.2/v0.3.3 中已有对应修改，但都**未经 Windows 实机验证**：
   - W01：编码探针失败；
   - W02：错误 JSON 和报告中出现了 Windows 绝对路径；
@@ -63,18 +64,16 @@ git -C "$T\PATT-pdf" rev-parse HEAD
 
 ## 1b. 退出码规则（必须遵守）
 
-在 PowerShell 中，`命令 | Tee-Object ... | Select-Object ...` 之后的 `$LASTEXITCODE` 不一定是被测命令的退出码。**所有检查都用下面的 `Run` 函数执行。**它先把完整输出写入日志，取得真实退出码后，再显示输出尾部：
+在 PowerShell 中，`命令 | Tee-Object ... | Select-Object ...` 之后的 `$LASTEXITCODE` 不一定是被测命令的退出码。**所有检查都用仓库中的 `Run` 函数执行**：它先把完整输出写入日志，再取得真实退出码（命令无法启动时记为 `start-failed`），最后显示输出尾部。
 
 ```powershell
 New-Item -ItemType Directory "$T\logs" -Force | Out-Null
-function Run([string]$Name) {
-  $cmd, $rest = $args
-  & $cmd @rest *> "$T\logs\$Name.txt"; $rc = $LASTEXITCODE
-  "[$Name] exit=$rc   (log: `$T\logs\$Name.txt)"; Get-Content "$T\logs\$Name.txt" -Tail 25
-  "$Name $rc" | Add-Content "$T\logs\_exitcodes.txt"
-}
+. "$T\PATT-pdf\tools\run_logged.ps1"                         # 定义 Run
+Run wrapper-selftest pwsh -NoProfile -File "$T\PATT-pdf\tools\test_run_logged.ps1"   # 预期 exit=0，11 项 PASS
 ```
-用法示例：`Run pytest-ocr python -m pytest -q -p no:cacheprovider -rs`。环境变量要在 `Run` 之前用 `$env:X = ...` 设置，用完再还原。
+- 用法：`Run <名称> <命令> [参数...]`，例如 `Run pytest-ocr python -m pytest -q -p no:cacheprovider -rs`。环境变量在 `Run` 之前用 `$env:X = ...` 设置，用完再还原。
+- 如果 `wrapper-selftest` 不是 exit=0：记为“包装器 FAIL”，**不要**把后续结果记为产品失败；改为逐条手动执行，并在每条命令后立即记录 `$LASTEXITCODE`。
+- **包装器的失败不能计入产品结果。**
 
 ## 2. 记录环境（用户名替换为 `<USER>`）
 
@@ -113,12 +112,22 @@ Get-Command tesseract -ErrorAction SilentlyContinue | Select-Object -ExpandPrope
 & $PY -m venv "$T\venv"; & "$T\venv\Scripts\Activate.ps1"      # 被执行策略阻止时：Set-ExecutionPolicy -Scope Process Bypass
 python -m pip install --upgrade pip
 $extras = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "dev" } else { "ocr,dev" }   # opencv 没有 win_arm64 wheel
+Run install-diagnose python "$T\PATT-pdf\tools\install_check.py" --source "$T\PATT-pdf" --work "C:\pt-diag-$(Get-Random)" --dry-run
 Run install pip install "$T\PATT-pdf[$extras]"
-patt-pdf --version                                                   # 预期：patt-pdf 0.3.5.dev0
-python -c "import pymupdf,numpy,fontTools,cv2,platform;print(pymupdf.VersionBind,numpy.__version__,fontTools.version,cv2.__version__,platform.machine())"
+```
+- **R02 复测：**`install` 若 exit≠0，**原样记录为 FAIL**（不得改判 PASS），然后用辅助脚本重试一次。`--work` 必须是一个**还不存在**的新短目录，脚本不会复用或删除任何目录：
+  ```powershell
+  $W = "C:\pt$(Get-Random)"      # 新目录；C:\ 不可写时改用 "$env:LOCALAPPDATA\pt$(Get-Random)"
+  Run install-retry python "$T\PATT-pdf\tools\install_check.py" --source "$T\PATT-pdf" --work $W --extras $extras
+  ```
+  两次的退出码都写入报告；`install-diagnose` 的输出（路径长度、LongPathsEnabled、残留）也要附上。
+```powershell
+Run version patt-pdf --version                                       # 预期：patt-pdf 0.3.6.dev0
+python -c "import pymupdf,numpy,fontTools,platform;print(pymupdf.VersionBind,numpy.__version__,fontTools.version,platform.machine())"
+python -c "import cv2;print(cv2.__version__)"                         # ARM64 上预期失败（无 [ocr]）
+Run preflight python -S "$T\PATT-pdf\tools\preflight.py"           # 预期 exit=0，diagnosis: no problem found
 ```
 - **ARM64 Windows：**截至 2026-11-07，PyPI 上 PyMuPDF、numpy、Pillow、PyYAML 都有 `win_arm64` wheel，但 **opencv-python-headless 没有**。因此 ARM64 上不安装 `[ocr]`，OCR 相关项全部标为 SKIP（原因：不支持）。若其他依赖安装失败，记录 FAIL 和 pip 的报错，不要从源码编译。
-- **pip 报“文件名或扩展名太长”：**把这件事记入 W05。只对当前进程设置较短的临时目录后重试，例如 `$env:TEMP="C:\pt"; $env:TMP="C:\pt"`，前提是该目录可写，且只在测试目录范围内使用。
 
 **字体**（Noto Sans/Serif CJK SC，许可证为 SIL OFL 1.1）：
 
@@ -281,6 +290,18 @@ $env:PATT_PDF_TESSERACT = "$T\missing\tesseract.exe"; python tools\ci_check_ocr.
 $env:PATT_PDF_TESSERACT = $keep; python tools\ci_check_ocr.py expect-present                         # 预期 OK
 ```
 
+**E1c 测试工具在中文临时目录 + 非 UTF-8 输出下（R01 复测）：**
+```powershell
+$env:PYTHONIOENCODING = "cp1252:surrogateescape"
+Run r01-fixture-minimal python tests\fixtures\make_fixtures.py "$T\repro 输入"             # 预期 exit=0（上一轮 exit=1）
+Remove-Item Env:PYTHONIOENCODING
+$keepTemp = $env:TEMP; $keepTmp = $env:TMP; $env:TEMP = "$T\临时 目录"; $env:TMP = $env:TEMP; New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+Run r01-pytest python -m pytest -q -p no:cacheprovider -rA tests\test_encoding.py -k "windows_like or fixture_generator or generator_failure"
+$env:TEMP = $keepTemp; $env:TMP = $keepTmp
+```
+- 预期：`r01-fixture-minimal` exit=0，输出含 `wrote 13 fixtures`；`r01-pytest` 全部 PASS。日志中应出现 `STAGE: CLI plan/translate/render`。
+- 若仍失败：注明是“fixture generator (before any CLI call)”（测试工具）还是 CLI 阶段（产品），不要混为一谈。
+
 **E9 可编辑安装（只记录，不预设结果）：**`$T` 的路径含中文，正好用来观察 Windows 上 `.pth` 的读取方式。
 ```powershell
 & $PY -m venv "$Tenv-edit"
@@ -317,6 +338,10 @@ pytest 有OCR：n passed / n failed / n skipped（逐条列出跳过原因）
 pytest 无OCR：…
 E1 编码 ................ PASS/FAIL；默认编码=<…>；cp936/cp1252：未验证/已验证（何种机器）
 E1b 重定向输出编码 ..... cp1252/cp936 模拟：PASS/FAIL；真实非 UTF-8 系统：PASS/FAIL/SKIP
+E1c 测试工具 R01 ........ 生成器 exit=<…>；pytest PASS/FAIL（失败时注明：测试工具/CLI）
+包装器自测 ............. exit=<…>（11 项）
+安装 R02 ............... 首次 exit=<…>；install_check 重试 exit=<…>（若有）；诊断输出：<…>
+preflight .............. exit=<…>；diagnosis：<…>
 E2 无OCR批处理 ......... PASS/FAIL  C1 rc=<…>  KeyError 次数=<…>  状态表偏差：<…>
 E3 有OCR ............... PASS/FAIL/SKIP
 E4 原生文件锁 .......... PASS/FAIL（rc、提示、哈希、.tmp 残留）；查看器实测：PASS/FAIL/SKIP

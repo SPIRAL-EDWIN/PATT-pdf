@@ -87,17 +87,60 @@ def _run_probe(extra_env, fonts_dir):
 def test_pipeline_with_platform_default_encoding(fonts_ready):
     """UTF-8 mode off: on Windows this runs with the real ANSI code page (cp1252, cp936 …)."""
     rc, out = _run_probe({}, fonts_ready)
+    _assert_cli_stage_reached(rc, out)
+
+
+def _assert_cli_stage_reached(rc, out):
+    """The probe must really have run the CLI: a fixture-generator failure (exit 3, R01) or an
+    early crash is reported as such and never passes as an encoding result."""
+    assert "FAIL: fixture generator" not in out, "test tool failed before the CLI: " + out[-2000:]
+    assert "STAGE: fixtures ready" in out and "STAGE: CLI plan/translate/render" in out, out[-2000:]
     assert rc == 0 and "OK" in out, out[-3000:]
 
 
-def test_pipeline_with_windows_like_piped_console(fonts_ready):
-    """Reproduces the Windows CI failure of ca38a93 on any OS: a piped stdout on Windows defaults
-    to the ANSI code page with errors='surrogateescape' (CPython initconfig.c), which cannot
-    encode '报' or '–'. `plan` used to abort with UnicodeEncodeError: 'charmap' while printing
-    the file name (all three Windows jobs, 4 tests). The pipeline must finish and stay correct."""
-    rc, out = _run_probe({"PYTHONIOENCODING": "cp1252:surrogateescape"}, fonts_ready)
-    assert rc == 0 and "OK" in out, out[-3000:]
+def test_pipeline_with_windows_like_piped_console(fonts_ready, tmp_path):
+    """Reproduces two findings on any OS: a piped stdout on Windows defaults to the ANSI code page
+    with errors='surrogateescape' (CPython initconfig.c), which cannot encode '报' or '–'.
+    * CI ca38a93: `plan` aborted with UnicodeEncodeError while printing the file name;
+    * Windows retest R01 (07ed2df): the user's temp/work folder contained Chinese characters and
+      the FIXTURE GENERATOR crashed printing it, before any CLI call. CI stayed green because the
+      runner's temp folder is ASCII. So the temp folder here is non-ASCII with a space."""
+    tmp = tmp_path / "临时 目录"; tmp.mkdir()
+    rc, out = _run_probe({"PYTHONIOENCODING": "cp1252:surrogateescape", "TMPDIR": str(tmp), "TEMP": str(tmp),
+                          "TMP": str(tmp)}, fonts_ready)
+    _assert_cli_stage_reached(rc, out)
+    assert "temp folder is ASCII: False" in out, out[-1500:]          # the R01 condition really applied
     assert "UnicodeEncodeError" not in out
+
+
+@pytest.mark.parametrize("ioenc", ["cp1252:surrogateescape", "cp936:surrogateescape", "cp1252:strict"])
+def test_fixture_generator_survives_legacy_piped_console(tmp_path, ioenc):
+    """R01, test tool only (separate from the CLI tests): make_fixtures.py writing into a folder
+    with Chinese characters and a space must finish with exit 0 on a cp1252/cp936 pipe."""
+    out_dir = tmp_path / "repro 输入"
+    env = dict(os.environ, PYTHONIOENCODING=ioenc,
+               PYTHONPATH=os.pathsep.join([str(ROOT / "src")] + [p for p in sys.path if p]))
+    r = subprocess.run([sys.executable, "-X", "utf8=0", str(ROOT / "tests" / "fixtures" / "make_fixtures.py"),
+                        str(out_dir)], capture_output=True, env=env, timeout=300)
+    text = (r.stdout + r.stderr).decode(ioenc.split(":")[0], "replace")
+    assert r.returncode == 0, text[-1500:]
+    assert "wrote 13 fixtures" in text and "UnicodeEncodeError" not in text
+    assert (out_dir / "truth.json").exists() and (out_dir / "\u62a5\u544a 2026 \u2013 r\xe9sum\xe9.pdf").exists()
+
+
+def test_probe_reports_generator_failure_as_tool_failure(fonts_ready, tmp_path):
+    """If the generator breaks, the probe exits 3 with a clear message; it must not look like a
+    CLI pass or a CLI encoding failure."""
+    bad = tmp_path / "bad"; bad.mkdir()
+    (bad / "make_fixtures.py").write_text("FIXTURES = []\ndef main(o):\n    raise RuntimeError('boom')\n"
+                                          "def load_truth(p):\n    return {}\n", encoding="utf-8")
+    probe = bad / "encoding_probe.py"; probe.write_text(PROBE.read_text(encoding="utf-8"), encoding="utf-8")
+    env = dict(os.environ, PYTHONUTF8="0", PATT_PDF_FONT_DIR=str(fonts_ready),
+               PYTHONPATH=os.pathsep.join([str(ROOT / "src")] + [p for p in sys.path if p]))
+    r = subprocess.run([sys.executable, str(probe)], capture_output=True, env=env, timeout=120)
+    out = (r.stdout + r.stderr).decode("ascii", "backslashreplace")
+    assert r.returncode == 3 and "FAIL: fixture generator (before any CLI call): RuntimeError: boom" in out, out
+    assert "STAGE: CLI" not in out
 
 
 def _legacy_locales():

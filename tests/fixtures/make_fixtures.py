@@ -360,7 +360,25 @@ def main(outdir: str) -> None:
         truth[f.__name__] = f(out)
     (out / "truth.json").write_text(json.dumps(truth, indent=1, ensure_ascii=False), encoding="utf-8")
     (out / "manual_tm.json").write_text(json.dumps(MANUAL_TM, indent=1, ensure_ascii=False), encoding="utf-8")
-    print(f"wrote {len(FIXTURES)} fixtures to {out}")
+    say(f"wrote {len(FIXTURES)} fixtures to {out}")
+
+
+def say(msg: str, stream=None) -> None:
+    """Print a status line that may contain a non-ASCII path, on any console.
+
+    Windows retest R01 (v0.3.5): with output redirected and a cp1252/cp936 stream (whose default
+    error handler on Windows is surrogateescape), printing the output folder `…\\PATT 复测 …`
+    raised UnicodeEncodeError, so the generator failed before the encoding probe reached the CLI.
+    Characters the stream cannot encode are written as backslash escapes instead."""
+    stream = stream or sys.stdout
+    enc = getattr(stream, "encoding", None) or "ascii"
+    try:
+        msg.encode(enc)
+    except UnicodeEncodeError:
+        msg = msg.encode(enc, "backslashreplace").decode(enc)
+    except LookupError:
+        msg = msg.encode("ascii", "backslashreplace").decode("ascii")
+    print(msg, file=stream)
 
 
 if __name__ == "__main__":

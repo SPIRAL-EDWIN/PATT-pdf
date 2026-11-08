@@ -1,17 +1,37 @@
-# Status of v0.3.5.dev0 (2026-11-08): experimental, cross-platform test candidate
+# Status of v0.3.6.dev0 (2026-11-08): experimental, cross-platform test candidate
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.5.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.6.dev0` (a development pre-release, not a stable release).
 
-**The cross-platform stage is NOT complete.** Completion needs: a green CI run of this version on all 10 jobs, and this version re-tested from a fresh install on the user's macOS and Windows machines (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`).
+**The cross-platform stage is NOT complete.** v0.3.5 (`07ed2df`) passed CI on all 10 jobs and was re-tested on a real Mac and a real Windows PC; those retests found M3, R01, R02 and a retest-wrapper bug (§0-R). v0.3.6 addresses them. Completion still needs: CI of this version, and the macOS (3.11 and 3.12) and Windows x64 retests of this version (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`). Stage completion is not production readiness (§5).
 
-**Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends, on CPython 3.10.12 (Ubuntu) and on real python-build-standalone CPython 3.11.18 and 3.12.16 builds (§4). The Windows fixes are confirmed only by reproducing the CI conditions on Linux (simulation), not on Windows.
-**CI so far:** one run, of v0.3.4 (`ca38a93`, §0-CI). The fixed version has not run in CI.
-**Real-system evidence so far:**
-* v0.3.1 (`6b969b8`): full reviewer runs on macOS and Windows (§0b).
-* v0.3.2 (`30d7366`): an independent functional check on macOS arm64 / Python 3.12 (§0a).
-* v0.3.3 (`1897418`): an independent check on macOS arm64, Python 3.12.14 and 3.11.16 (§0). Not a fresh-install acceptance.
+**Verified for this version:** only on Linux aarch64 (container), synthetic PDFs, offline backends; CPython 3.10.12 (Ubuntu) and python-build-standalone CPython 3.11.18 / 3.12.16; the PowerShell wrapper under PowerShell 7.6.9 **on Linux** (not Windows). Windows conditions (cp1252 pipe, non-ASCII temp folder) only simulated.
+**Evidence for the previous version v0.3.5 (`07ed2df`):** CI run 42459411475, 10/10 jobs (§0-R); user's Mac (macOS 27.2 arm64, 3.11.16 and 3.12.16) and user's Windows 11 x64 PC (3.12.10, code page 65001), both from a fresh install (§0-R). These are v0.3.5 results, not v0.3.6 results.
 
-**Not verified:** v0.3.5 on macOS or Windows (real machines or CI); real-world PDFs; real DeepL calls; cp936/cp1252 Windows systems; Preview/Acrobat interaction; CI (written, never run).
+**Not verified:** v0.3.6 anywhere but Linux; real-world PDFs; real DeepL calls; a real cp936/cp1252 Windows system; Edge/Acrobat/Preview interaction beyond opening; Windows ARM64 hardware; editable installs on Windows with a legacy code page.
+
+## 0-R. v0.3.5 (`07ed2df`) on CI and real machines, and what v0.3.6 changes
+
+**CI run 42459411475** (head `07ed2df`, all 10 jobs success; read from the job logs). A green job is not "nothing skipped":
+
+| Job | Main suite | UTF-8-off encoding step |
+|---|---|---|
+| ubuntu-24.04 py3.12 / py3.13 ocr, ubuntu-24.04-arm py3.12 ocr | 196 passed, 2 skipped (no legacy locale on the runner; Windows lock) | 11 passed, 1 skipped |
+| ubuntu-24.04 py3.10 no-OCR | 191 passed, 7 skipped (+5 OCR) | 11 passed, 1 skipped |
+| macos-15 py3.12 ocr, macos-15-intel py3.11 ocr | 197 passed, 1 skipped (Windows lock) | 12 passed |
+| macos-15 py3.11 no-OCR | 192 passed, 6 skipped | 12 passed |
+| windows-2025 py3.12 ocr | 193 passed, 5 skipped (POSIX-only tests) | 11 passed, 1 skipped |
+| windows-2025 py3.13 / windows-11-arm py3.12 no-OCR | 188 passed, 10 skipped | 11 passed, 1 skipped |
+
+CI limits: no runner has a non-UTF-8 POSIX locale (the legacy-locale and `.pth` simulations skip on Linux and do not run on Windows); the Windows runners' temp folders are ASCII; the macOS runners are not the user's Mac.
+
+**User's Mac** (macOS 27.2 arm64, Python 3.11.16 and 3.12.16, Tesseract 5.5.4): with OCR 197 passed / 1 skipped each; forced no-OCR 192 passed / 6 skipped each; M4–M7, M7b passed; M8 images checked in an image viewer, Preview step partly SKIP. **User's Windows PC** (Windows 11 x64, Python 3.12.10, ACP 65001, Tesseract 5.5.3): with OCR 192 passed / 1 failed / 5 skipped, without 187 / 1 / 10; E2–E9 passed (E7: a 400-character path fails with a clear LongPathsEnabled message and works as `\\?\` extended path; ordinary long paths are NOT supported). Reports are private and not in the repository.
+
+| Finding | What was established | v0.3.6 | Status |
+|---|---|---|---|
+| **R01** `test_pipeline_with_windows_like_piped_console` failed on the user's PC | Reproduced on Linux: with a cp1252:surrogateescape pipe, **the fixture generator** (`tests/fixtures/make_fixtures.py`) crashed printing its output folder, which contains Chinese on the user's PC (`…\\PATT 复测 …`); no CLI call was made. The CLI itself passed the same pipes (E1b). CI was green because the runner's temp folder is ASCII. A test-tool defect, not a product defect. | Generator escapes unencodable characters; the probe exits 3 with "fixture generator (before any CLI call)" if the generator fails and prints STAGE lines; the end-to-end test now uses a non-ASCII temp folder and asserts the CLI stage was reached; separate generator test for cp1252/cp936 pipes; a test that a generator failure is reported as such. Before the fix 3 tests fail. CI step runs these in `$RUNNER_TEMP/临时 目录`. | Fixed (Linux simulation); Windows retest pending |
+| **M3** Mac, Python 3.11, editable install from a non-ASCII folder, en_US.ISO8859-1 / zh_CN.GBK: not importable / interpreter does not start; `python -m patt_pdf.cli doctor` cannot start there | Expected for CPython 3.11's `site.py` (`.pth` read with the locale encoding; `PYTHONUTF8=1` does not change that), already documented; regular installs work; 3.12.16 works. A diagnosis gap: `doctor` lives in the package it should diagnose. Reproduced with real 3.11.18 on Linux (GBK and CP1252: interpreter fails in `site.py`). | New `tools/preflight.py`: standard library only, started with `python -S`, so it runs where `doctor` cannot. Reports separately: interpreter runs with `-S`, starts normally, imports `patt_pdf`, each non-ASCII `.pth` line with predicted result; then recovery steps (regular install in an ASCII folder; UTF-8 locale for the shell; never "PYTHONUTF8 always fixes it"). Changes nothing. Tests compare its verdict with the interpreter's real behaviour in every available locale × UTF-8 Mode (3.10/3.11/3.12 locally); mutations (version-based strategy, ignoring the fs encoding) fail them. | Mitigated: unsupported combination stays unsupported, now diagnosable; Mac retest pending |
+| **R02** Windows regular install from a deep folder failed (pip temp path, then stale `build/`) | Not a source difference (the final install was byte-identical). Long temp/build paths with LongPathsEnabled=0 and leftover build state are the likely factors; a single root cause is not proven. | New `tools/install_check.py`: read-only diagnosis (path lengths, LongPathsEnabled, leftovers), clean copy of only the package files into a NEW short folder, TEMP/TMP for pip only, real pip exit code; refuses existing folders, deletes nothing. Tests: dry run creates nothing, stale `build/`/egg-info/bytecode are never copied, existing folders untouched, real offline install (3.11.18). | Mitigated; Windows retest pending |
+| **Retest wrapper**: PowerShell `Run` split a single trailing argument into characters | Confirmed with PowerShell 7.6.9: `$cmd, $rest = $args` makes `$rest` a String when one argument follows. | `tools/run_logged.ps1` (array arguments, `start-failed` for unknown commands, cmdlets, real exit code, log written first); `tools/test_run_logged.ps1` self-test with 11 checks incl. that the old wrapper shows the bug. Passed with PowerShell 7.6.9 on Linux; CI step on Windows runners (not yet run). | Fixed; Windows run pending |
 
 ## 0-CI. First GitHub Actions run (v0.3.4, `ca38a93`, run 42396678823, 2026-11-07)
 
@@ -162,6 +182,17 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 4. Test results
 
+### v0.3.6.dev0, this environment (Linux aarch64 container)
+
+212 tests (15 new). pyflakes clean.
+
+| Run | Result | Skips |
+|---|---|---|
+| CPython 3.10.12, dev tree | 210 passed, 2 skipped | Windows lock; offline install test (setuptools 59 < 61 in the venv) |
+| CPython 3.11.18, regular install, non-ASCII folder | 211 passed, 1 skipped | Windows lock |
+| CPython 3.12.16, regular install, non-ASCII folder | 210 passed, 2 skipped | Windows lock; offline install test (fresh venv has no setuptools) |
+| `pwsh -File tools/test_run_logged.ps1` (PowerShell 7.6.9, Linux arm64) | 11/11 checks | – |
+
 ### v0.3.5.dev0, this environment (Linux aarch64 container)
 
 196 tests (6 new: 5 regression tests for the Windows CI findings + 1 workflow guard; plus 1 workflow test). pyflakes clean.
@@ -295,6 +326,7 @@ The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, 
 
 ## 7. Compatibility notes
 
+* v0.3.6: no engine or CLI behaviour change. New tools: `tools/preflight.py`, `tools/install_check.py`, `tools/run_logged.ps1` (+ self-test). The encoding probe exits 3 when the fixture generator fails.
 * v0.3.5: no engine change. CLI output on non-UTF-8 consoles now always escapes unencodable characters (previously only for the `strict` handler). `osenv.font_search_dirs(…, os_name=<other OS>)` returns pure paths of that OS.
 * v0.3.4: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`). `platform_info()`/`doctor` gained `pth_strategy`, `pth_locale_encoding`, `site_frozen`. A missing OpenCV during planning is a skipped page note (`page_not_processed`), not a planning error.
 * v0.3.3: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`); existing state directories stay valid. Error texts in state files now redact *all* absolute paths (`<path>/name`). `pyyaml` was added to the `dev` extra (CI-workflow check only).

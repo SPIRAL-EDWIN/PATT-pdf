@@ -1,6 +1,8 @@
 """Run the fixture generator and a small CLI pipeline in a child process whose default text
 encoding is NOT UTF-8 (see tests/test_encoding.py). Prints only ASCII. Exit codes:
-0 ok, 1 assertion failed, 2 an implicit default-encoding use was attributed to project code.
+0 ok, 1 assertion failed, 2 an implicit default-encoding use was attributed to project code,
+3 the fixture generator itself failed (no CLI call was made; a test-tool problem, see R01).
+STAGE lines show how far the probe got; callers assert that the CLI stage was reached.
 
 Detection: the child runs with `-X warn_default_encoding`. Every EncodingWarning is recorded
 with the file that triggered it. Warnings raised from PATT-PDF code (src/patt_pdf, the probe and
@@ -81,7 +83,13 @@ def run():
           "warn_default_encoding:", getattr(sys.flags, "warn_default_encoding", "n/a"))
     with tempfile.TemporaryDirectory(prefix="patt-enc-") as td:
         td = Path(td); src = td / "in"
-        make_fixtures.main(str(src))
+        try:
+            make_fixtures.main(str(src))
+        except Exception as e:              # a test-tool failure must not look like a CLI result
+            print("FAIL: fixture generator (before any CLI call):",
+                  f"{type(e).__name__}: {e}".encode("ascii", "backslashreplace").decode())
+            sys.exit(3)
+        print("STAGE: fixtures ready; temp folder is ASCII:", str(td).isascii())
         truth = make_fixtures.load_truth(src / "truth.json")
         tm_path = td / "manual_tm.json"
         (src / "manual_tm.json").replace(tm_path); (src / "truth.json").replace(td / "truth.json")
@@ -93,6 +101,7 @@ def run():
         st = td / "state"
         files = ["table.pdf", "toc.pdf"] + ([UNICODE_NAME] if utf8_fs else [])
         for f in files:
+            print("STAGE: CLI plan/translate/render", f.encode("ascii", "backslashreplace").decode())
             check(cli(["plan", str(src), "--state", str(st), "--no-ocr", "--files", f]) == 0, "plan " + f)
             check(cli(["translate", str(src), "--state", str(st), "--backend", "manual", "--manual-tm", str(bom),
                        "--max-chars", "9999", "--files", f]) == 0, "translate " + f)

@@ -1,7 +1,7 @@
 # Offline test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual
-# backends only. First run: ca38a93, run 42396678823 (2026-11-07): Linux 3/3 and macOS 4/4 jobs
-# passed; all 3 Windows jobs failed 5 tests (console encoding, host path rules in a font test).
-# Fixed afterwards; the fixed version has NOT run in CI yet.
+# backends only. Runs so far: ca38a93 (run 42396678823): Linux 3/3, macOS 4/4 passed, Windows 0/3
+# (5 tests each); 07ed2df (run 42459411475): 10/10 jobs passed. Steps added after 07ed2df (preflight,
+# PowerShell wrapper self-test, non-ASCII temp folder) have NOT run in CI yet.
 #
 # Dependency wheels per runner were checked on PyPI on 2026-11-07 (see the windows-11-arm entry).
 # Runner labels were checked on 2026-11-07 against github.com/actions/runner-images (README
@@ -137,8 +137,20 @@ jobs:
           echo "doctor exit code: $rc (2 = warnings such as missing fonts; informational here)"
       - name: Lint
         run: python -m pyflakes src tests tools
+      - name: Install preflight (standard library only, started with -S; must report a healthy env)
+        run: python -S tools/preflight.py
+      - name: PowerShell retest wrapper self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File tools/test_run_logged.ps1
       - name: Tests
         run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit.xml
+      - name: Console-encoding and fixture regressions in a non-ASCII temp folder (R01)
+        if: ${{ !cancelled() }}
+        run: |
+          d="$RUNNER_TEMP/临时 目录"; mkdir -p "$d"
+          TMPDIR="$d" TEMP="$d" TMP="$d" python -m pytest -q -p no:cacheprovider -rA \
+            tests/test_encoding.py -k "windows_like or fixture_generator or generator_failure" 
       - name: Encoding tests with UTF-8 mode off
         if: ${{ !cancelled() }}        # still run (and report) when the full suite failed
         env:

@@ -67,3 +67,14 @@ def test_all_existing_platform_targets_are_kept(wf):
 def test_utf8_off_encoding_step_runs_after_a_failed_suite(wf):
     steps = {s.get("name"): s for s in wf["jobs"]["test"]["steps"]}
     assert "cancelled()" in str(steps["Encoding tests with UTF-8 mode off"].get("if", ""))
+
+
+def test_retest_regressions_are_in_ci(wf):
+    """v0.3.5 retest findings (R01, wrapper, M3) are exercised in CI, not only locally."""
+    steps = {s.get("name"): s for s in wf["jobs"]["test"]["steps"]}
+    pre = next(s for n, s in steps.items() if n and n.startswith("Install preflight"))
+    assert "python -S tools/preflight.py" in pre["run"]
+    ps = next(s for n, s in steps.items() if n and n.startswith("PowerShell retest wrapper"))
+    assert ps["shell"] == "pwsh" and "runner.os == 'Windows'" in ps["if"] and "test_run_logged.ps1" in ps["run"]
+    r01 = next(s for n, s in steps.items() if n and "R01" in n)
+    assert "临时 目录" in r01["run"] and "TEMP=" in r01["run"] and "windows_like" in r01["run"]
