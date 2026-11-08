@@ -74,6 +74,8 @@ patt-pdf doctor
 
 如果没有 Python 启动器，可用 `python -m venv .venv`。未启用 Windows 长路径时建议使用 `C:\patt` 等短路径；如果 `pip install` 报临时文件不存在或“文件已存在”，可运行 `python tools\install_check.py --source . --work C:\pt`，它会把源码干净复制到一个新的短目录再安装（不会删除任何东西）。OCR 依赖不一定覆盖所有 Python / CPU 组合，包括 Windows ARM；请查看 `doctor` 和[平台说明](docs/STATUS.md)。
 
+为降低凭据泄露风险，`install_check.py` 会隐藏 pip 输出并报告退出码。这不能控制 pip 自身的文件日志、配置、环境变量或进程参数：请避免在命令参数、`PIP_LOG`、`--log` 或共享配置中放入凭据，并在分享日志前检查。
+
 </details>
 
 <details>

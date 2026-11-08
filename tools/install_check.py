@@ -179,10 +179,20 @@ def main(argv=None) -> int:
     env = dict(os.environ, TMP=str(tmp), TEMP=str(tmp), TMPDIR=str(tmp))
     target = str(copy) + (f"[{a.extras}]" if a.extras else "")
     cmd = [a.python, "-m", "pip", "install", target] + extra
-    print("  running: " + " ".join(repr(c) if (" " in c or not c) else c for c in cmd))
+    # pip options, environment/config and pip's own diagnostics can contain credentials.
+    # Do not print the command or forward child output, even on failure. argv is still
+    # passed unchanged, without a shell, so paths containing spaces remain intact.
+    print("  running pip install (arguments and pip output hidden to protect credentials)")
     sys.stdout.flush()
-    rc = subprocess.run(cmd, env=env).returncode
+    try:
+        rc = subprocess.run(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    except OSError:
+        print("error: unable to start the requested Python interpreter")
+        return 1
     print(f"pip exit code: {rc}")
+    if rc:
+        print("pip failed; diagnostics are hidden because they may contain credentials. "
+              "Check your pip configuration privately before retrying.")
     if rc == 0:
         print(f"done. The folder {work} can be deleted manually after checking (pip does not need it any more).")
     return rc

@@ -136,6 +136,8 @@ def check(python: str, site_dirs: list[str] | None = None, private: bool = False
     if rc != 0 or not out.strip():
         res["checks"]["interpreter_runs_with_-S"] = f"FAIL ({_last_line(err) or rc})"
         res["problems"].append("the interpreter does not run even without site.py; this is not a PATT-PDF problem")
+        if not private:
+            _redact_result(res)
         return res
     facts = json.loads(out.strip().splitlines()[-1])
     res["facts"] = facts
@@ -218,6 +220,11 @@ def _redact_result(res: dict) -> None:
     res["site_packages"] = [f"<site-packages #{i + 1}>" for i, _ in enumerate(res.get("site_packages", []))]
     res["checks"] = {k: _redact(v) for k, v in res["checks"].items()}
     res["problems"] = [_redact(x) for x in res["problems"]]
+    # An OS exception can contain paths in encoded or unusual forms. Preserve the fact
+    # that a .pth could not be inspected, not the untrusted exception text itself.
+    for entry in res.get("pth", []):
+        if "error" in entry:
+            entry["error"] = "Unable to read .pth file; check locally with --private-details"
     res["redacted"] = True
 
 

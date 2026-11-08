@@ -74,6 +74,11 @@ patt-pdf doctor
 
 If the Python launcher is unavailable, use `python -m venv .venv`. Use a short path such as `C:\patt` if Windows long paths are disabled; if `pip install` fails with a missing temporary file or "file already exists", `python tools\install_check.py --source . --work C:\pt` retries from a clean copy in a short new folder (it never deletes anything). OCR dependencies may not be available for every Python/CPU combination, including Windows ARM; check `doctor` and the [platform notes](docs/STATUS.md).
 
+For privacy, `install_check.py` suppresses pip's output and reports its exit code.
+This does not control pip's own file logging, configuration, environment, or
+process arguments: avoid placing credentials in command arguments, `PIP_LOG`,
+`--log`, or shared configuration, and inspect private logs before sharing.
+
 </details>
 
 <details>

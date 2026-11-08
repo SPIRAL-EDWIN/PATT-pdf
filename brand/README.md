@@ -1,5 +1,13 @@
 # PATT-PDF logo
 
+## Authorship and license
+
+The project owner confirms that the distributed PATT-PDF logo SVGs and
+`logo-preview.png` are original work created for this project. These assets
+are distributed under the project's AGPL-3.0-or-later license; see
+[LICENSE](../LICENSE). The wordmark's visual style was inspired by OpenCode;
+PATT-PDF is not affiliated with or endorsed by the OpenCode project.
+
 See **`logo-preview.png`** for an overview on light and dark backgrounds.
 
 The mark has two parts: an **icon** (a PDF page split by a black diagonal, with a red

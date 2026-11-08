@@ -48,6 +48,8 @@ def fake_python(tmp_path):
         "a = sys.argv[1:]\n"
         "if a[:1] == ['-c']:\n"
         "    print(os.environ.get('FAKE_SETUPTOOLS', '80.0.0'), os.environ.get('FAKE_WHEEL', '0')); sys.exit(0)\n"
+        "print(os.environ.get('FAKE_PIP_OUTPUT', ''))\n"
+        "print(os.environ.get('FAKE_PIP_OUTPUT', ''), file=sys.stderr)\n"
         f"open({str(rec)!r}, 'w', encoding='utf-8').write(json.dumps(a, ensure_ascii=False))\n"
         "sys.exit(int(os.environ.get('FAKE_PIP_RC', '0')))\n", encoding="utf-8")
     if os.name == "nt":
@@ -112,6 +114,20 @@ def test_pip_exit_code_is_returned(tmp_path, fake_python):
     env = dict(os.environ, FAKE_PIP_RC="7")
     rc, out = _run("--source", ROOT, "--work", tmp_path / "w", "--python", fake_python["python"], env=env)
     assert rc == 7 and "pip exit code: 7" in out
+
+
+@pytest.mark.parametrize("exit_code", ["0", "7"])
+def test_sensitive_pip_arguments_and_child_output_are_never_printed(tmp_path, fake_python, exit_code):
+    secret = "FAKE_SECRET_NOT_REAL_4829"
+    url = f"https://fakeuser:{secret}@example.invalid/simple"
+    env = dict(os.environ, FAKE_PIP_RC=exit_code, FAKE_PIP_OUTPUT=url)
+    rc, out = _run("--source", ROOT, "--work", tmp_path / "w", "--python", fake_python["python"],
+                   "--pip-arg=--index-url", f"--pip-arg={url}", env=env)
+    assert rc == int(exit_code)
+    assert secret not in out and "fakeuser" not in out and url not in out
+    # Suppression only affects diagnostics, not arguments delivered to pip.
+    argv = json.loads(fake_python["argv"].read_text(encoding="utf-8"))
+    assert argv[-2:] == ["--index-url", url]
 
 
 @pytest.mark.parametrize("legacy", ['--find-links "/a b"', "--find-links /tmp/wheel house", "--find-links C:\\wh"])

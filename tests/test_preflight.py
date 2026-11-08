@@ -195,6 +195,41 @@ def test_private_details_are_opt_in_and_marked(private_env):
     assert "Keep it private" in err
 
 
+@pytest.mark.parametrize("fmt", ["text", "json"])
+def test_missing_interpreter_is_redacted_even_on_early_return(tmp_path, fmt):
+    missing = tmp_path / "secretuser_zq7" / "private interpreter"
+    args = [sys.executable, "-S", str(PREFLIGHT), "--python", str(missing)]
+    if fmt == "json":
+        args.append("--json")
+    r = subprocess.run(args, capture_output=True, timeout=60)
+    out = (r.stdout + r.stderr).decode("utf-8", "replace")
+    assert r.returncode == 1 and "interpreter_runs_with_-S" in out
+    assert "secretuser_zq7" not in out and str(missing) not in out
+    if fmt == "json":
+        assert json.loads(r.stdout.decode("ascii"))["redacted"] is True
+    private = subprocess.run(args + ["--private-details"], capture_output=True, timeout=60)
+    assert "secretuser_zq7" in private.stdout.decode("utf-8", "replace")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks on Windows can require extra privileges")
+@pytest.mark.parametrize("fmt", ["text", "json"])
+def test_unreadable_pth_exception_is_redacted(tmp_path, fmt):
+    site = tmp_path / "secretuser_zq7" / "private site"
+    site.mkdir(parents=True)
+    (site / "broken.pth").symlink_to(site / "missing target")
+    args = [sys.executable, "-S", str(PREFLIGHT), "--python", sys.executable,
+            "--site-packages", str(site)]
+    if fmt == "json":
+        args.append("--json")
+    r = subprocess.run(args, capture_output=True, timeout=60)
+    out = (r.stdout + r.stderr).decode("utf-8", "replace")
+    assert "secretuser_zq7" not in out and str(site) not in out
+    assert "Unable to read .pth file" in out
+    if fmt == "json":
+        result = json.loads(r.stdout.decode("ascii"))
+        assert result["redacted"] is True and result["pth"][0]["file"] == "broken.pth"
+
+
 def test_redaction_keeps_safe_text():
     sys.path.insert(0, str(PREFLIGHT.parent))
     try:
