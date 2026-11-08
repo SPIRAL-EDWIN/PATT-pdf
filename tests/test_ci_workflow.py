@@ -78,3 +78,13 @@ def test_retest_regressions_are_in_ci(wf):
     assert ps["shell"] == "pwsh" and "runner.os == 'Windows'" in ps["if"] and "test_run_logged.ps1" in ps["run"]
     r01 = next(s for n, s in steps.items() if n and "R01" in n)
     assert "临时 目录" in r01["run"] and "TEMP=" in r01["run"] and "windows_like" in r01["run"]
+
+
+def test_offline_install_test_gets_a_wheelhouse_in_ci(wf):
+    """CI run 42480633442: the real offline install test failed on macOS 3.11 (setuptools 65.5,
+    no `wheel`) and skipped elsewhere. CI provides setuptools>=70.1 so the test really runs."""
+    steps = {s.get("name"): s for s in wf["jobs"]["test"]["steps"]}
+    wh = next(s for n, s in steps.items() if n and n.startswith("Build-backend wheelhouse"))
+    assert "setuptools>=70.1" in wh["run"] and "PATT_TEST_WHEELHOUSE" in wh["run"] and "--only-binary=:all:" in wh["run"]
+    names = [s.get("name") for s in wf["jobs"]["test"]["steps"]]
+    assert names.index(wh["name"]) < names.index("Tests")

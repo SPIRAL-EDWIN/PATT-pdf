@@ -132,3 +132,83 @@ def test_preflight_uses_only_the_standard_library():
     stdlib = getattr(sys, "stdlib_module_names", None) or {"argparse", "json", "os", "subprocess", "sys", "pathlib", "__future__"}
     assert mods <= set(stdlib) | {"__future__"}, mods
     assert "patt_pdf" not in mods
+
+
+# ------------------------------------------------------------------ minimal disclosure (review P0)
+def _leak_forms(secret: str) -> dict[str, str]:
+    """Ways a path can leak in a report: plain, UTF-8/UTF-16 hex, escapes, file URL, quoted."""
+    import urllib.parse
+    b = secret.encode("utf-8")
+    return {
+        "plain": secret,
+        "utf8-hex": b.hex(),
+        "utf8-hex-upper": b.hex().upper(),
+        "utf16le-hex": secret.encode("utf-16-le").hex(),
+        "utf16be-hex": secret.encode("utf-16-be").hex(),
+        "backslash-escape": secret.encode("unicode_escape").decode("ascii"),
+        "ascii-repr": ascii(secret)[1:-1],
+        "url-quoted": urllib.parse.quote(secret),
+        "file-url": "file://" + urllib.parse.quote(secret),
+        "hex-of-cjk-part": "我的私人 资料".encode("utf-8").hex(),
+    }
+
+
+@pytest.fixture(scope="module")
+def private_env(tmp_path_factory):
+    """A venv + editable-style .pth whose folder names contain a 'secret' user name and CJK."""
+    base = tmp_path_factory.mktemp("pfp")
+    src = base / "secretuser_zq7" / "我的私人 资料"; (src / "patt_pdf").mkdir(parents=True)
+    (src / "patt_pdf" / "__init__.py").write_text("__version__ = 'stub'\n", encoding="utf-8")
+    vdir = base / "secretuser_zq7" / "venv 环境"
+    venv.EnvBuilder(with_pip=False, symlinks=(os.name != "nt")).create(vdir)
+    py = vdir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    sp = subprocess.run([str(py), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60).stdout.strip()
+    (Path(sp) / "__editable__.patt_pdf_stub-0.pth").write_bytes(str(src).encode("utf-8") + b"\n")
+    return {"python": py, "src": src}
+
+
+@pytest.mark.parametrize("fmt", ["text", "json"])
+def test_default_output_contains_no_local_path_in_any_encoding(private_env, fmt):
+    env = dict(os.environ); env.pop("PYTHONPATH", None)
+    args = [sys.executable, "-S", str(PREFLIGHT), "--python", str(private_env["python"])] + (["--json"] if fmt == "json" else [])
+    r = subprocess.run(args, capture_output=True, env=env, timeout=120)
+    out = (r.stdout + r.stderr).decode("utf-8", "replace")
+    assert "interpreter_runs_with_-S" in out, out
+    for secret in (str(private_env["src"]), "secretuser_zq7", "我的私人 资料", str(private_env["python"])):
+        for kind, form in _leak_forms(secret).items():
+            assert form.lower() not in out.lower(), (kind, secret)
+    assert "secretuser" not in out.lower()
+    if fmt == "json":
+        res = json.loads(r.stdout.decode("ascii"))
+        assert res["redacted"] is True and res["python"] == "<python>"
+        line = res["pth"][0]["line"]
+        assert line["cjk_chars"] == 6 and line["spaces"] >= 1 and line["utf8"] is True and len(line["sha256_12"]) == 12
+
+
+def test_private_details_are_opt_in_and_marked(private_env):
+    env = dict(os.environ); env.pop("PYTHONPATH", None)
+    r = subprocess.run([sys.executable, "-S", str(PREFLIGHT), "--python", str(private_env["python"]), "--private-details"],
+                       capture_output=True, env=env, timeout=120)
+    out = r.stdout.decode("utf-8", "replace"); err = r.stderr.decode("utf-8", "replace")
+    assert "PRIVATE raw bytes (hex)" in out and str(private_env["src"]).encode("utf-8").hex() in out
+    assert "Keep it private" in err
+
+
+def test_redaction_keeps_safe_text():
+    sys.path.insert(0, str(PREFLIGHT.parent))
+    try:
+        import preflight
+    finally:
+        sys.path.remove(str(PREFLIGHT.parent))
+    for safe in ("UnicodeDecodeError: 'gbk' codec can't decode byte 0xae in position 17",
+                 "ModuleNotFoundError: No module named 'patt_pdf'", "https://example.org/field-guide", "exit 1"):
+        assert preflight._redact(safe) == safe, safe
+    for leaky in ('File "/home/secretuser_zq7/x 目录/site.py", line 3',
+                  "C:\\Users\\secretuser_zq7\\私人 目录\\x.pth",
+                  "\\\\fileserver\\secretuser_zq7\\a\\b",
+                  "see file:///Users/secretuser_zq7/a%20b/x and file://host/secretuser_zq7/x",
+                  "cannot open /Users/secretuser_zq7/my docs/report.pdf now",
+                  "~/secretuser_zq7/notes/a.txt"):
+        red = preflight._redact(leaky)
+        assert "secretuser_zq7" not in red and "目录" not in red, (leaky, red)

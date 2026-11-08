@@ -1,13 +1,54 @@
-# Status of v0.3.6.dev0 (2026-11-08): experimental, cross-platform test candidate
+# Status of v0.3.7.dev0 (2026-11-08): experimental, cross-platform test candidate
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.6.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.7.dev0` (a development pre-release, not a stable release).
 
-**The cross-platform stage is NOT complete.** v0.3.5 (`07ed2df`) passed CI on all 10 jobs and was re-tested on a real Mac and a real Windows PC; those retests found M3, R01, R02 and a retest-wrapper bug (§0-R). v0.3.6 addresses them. Completion still needs: CI of this version, and the macOS (3.11 and 3.12) and Windows x64 retests of this version (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`). Stage completion is not production readiness (§5).
+**Current priority (user decision, 2026-11-08):** macOS and Linux first. Windows code, tests and CI jobs stay, and their CI failures are fixed, but no new Windows *machine* retest is planned until the gate in §0-W is met.
 
-**Verified for this version:** only on Linux aarch64 (container), synthetic PDFs, offline backends; CPython 3.10.12 (Ubuntu) and python-build-standalone CPython 3.11.18 / 3.12.16; the PowerShell wrapper under PowerShell 7.6.9 **on Linux** (not Windows). Windows conditions (cp1252 pipe, non-ASCII temp folder) only simulated.
-**Evidence for the previous version v0.3.5 (`07ed2df`):** CI run 42459411475, 10/10 jobs (§0-R); user's Mac (macOS 27.2 arm64, 3.11.16 and 3.12.16) and user's Windows 11 x64 PC (3.12.10, code page 65001), both from a fresh install (§0-R). These are v0.3.5 results, not v0.3.6 results.
+**The cross-platform stage is NOT complete**, and completing it would not mean production readiness.
 
-**Not verified:** v0.3.6 anywhere but Linux; real-world PDFs; real DeepL calls; a real cp936/cp1252 Windows system; Edge/Acrobat/Preview interaction beyond opening; Windows ARM64 hardware; editable installs on Windows with a legacy code page.
+**Verified for this version:** only on Linux aarch64 (container): CPython 3.10.12 (Ubuntu), python-build-standalone 3.11.18 and 3.12.16; 240 passed / 2 skipped on each (§4). PowerShell 7.6.9 **on Linux** for the wrapper self-test. Not yet run in CI, not run on the user's Mac.
+**CI of the previous version v0.3.6 (`ae9c671`, run 42480633442):** 5 of 10 jobs passed (§0-L).
+
+**Not verified:** v0.3.7 on macOS (CI or the user's Mac); real-world PDFs (none in the repository; plan in `docs/testing/REAL_PDF_CORPUS.md`); real DeepL calls; Windows machines; a real cp936/cp1252 Windows system; Preview/Acrobat interaction beyond opening; Linux x64 outside CI.
+
+## 0-L. v0.3.6 (`ae9c671`) CI run 42480633442, review findings, and what v0.3.7 changes
+
+Read from the job logs (signed-in web UI). Test counts are the `Tests` step.
+
+| Job | Python (actual) | Result | Tests step |
+|---|---|---|---|
+| ubuntu-24.04 py3.12 ocr | 3.12.16 | success | 208 passed, 4 skipped |
+| ubuntu-24.04 py3.13 ocr | 3.13.18 | success | 208 passed, 4 skipped |
+| ubuntu-24.04-arm py3.12 ocr | 3.12.16 | success | 208 passed, 4 skipped |
+| ubuntu-24.04 py3.10 no-OCR | 3.10.22 | success | 204 passed, 8 skipped |
+| macos-15 py3.12 ocr | 3.12.10 | success | 210 passed, 2 skipped |
+| macos-15 py3.11 no-OCR | 3.11.9 | **failure** | 1 failed, 205 passed, 6 skipped |
+| macos-15-intel py3.11 ocr | 3.11.9 | **failure** | 1 failed, 210 passed, 1 skipped |
+| windows-2025 py3.12 ocr, windows-2025 py3.13, windows-11-arm py3.12 | 3.12.10 / 3.13.17 | **failure** | wrapper self-test failed (step 16), so `Tests` was skipped; preflight and the R01 step passed |
+
+Skips seen: Windows lock (POSIX jobs), 5 OCR tests (no-OCR jobs), legacy-locale tests (no non-UTF-8 locale on Linux runners), and the real offline-install test (no setuptools in a fresh venv on Linux/macOS 3.12).
+
+| Finding | Root cause (evidence) | v0.3.7 | Status |
+|---|---|---|---|
+| macOS 3.11 jobs: `test_real_install_into_a_fresh_venv` failed with `error: invalid command 'bdist_wheel'` | python.org CPython 3.11.9 bundles setuptools 65.5.0 (`ensurepip`, checked in the v3.11.9 sources); its venvs have no `wheel` package, and `bdist_wheel` is built into setuptools only from 70.1. With `--no-build-isolation` pip must use that setuptools. Reproduced on Linux: venv + setuptools 65.5.0 (PyPI wheel, SHA-256 checked) → same error. A test-environment problem, not a PATT-PDF or regular-install problem (regular installs use build isolation). | `install_check.py` checks the target's build backend before running pip with `--no-build-isolation` (exit 3 with a clear message; nothing created). The real install test now gets setuptools ≥ 70.1 from a local wheelhouse (`PATT_TEST_WHEELHOUSE`, or the interpreter's ensurepip bundle) and skips only if none exists; CI now downloads `setuptools>=70.1` (binary only) into a wheelhouse, so the test runs on every job. Fake-pip tests cover 65.5 with/without `wheel`, 70.1, 59.6, none. | Fixed (Linux); CI pending |
+| Windows jobs: wrapper self-test `several arguments, with spaces and Chinese` failed (`multi 1`) | Not the wrapper: the **child Python** printed `['…', '报告 2026 – résumé.pdf', …]` into a redirected log on a cp1252 runner and raised UnicodeEncodeError (exit 1), so the expected text was missing. Reproduced with PowerShell 7.6.9 on Linux and `PYTHONIOENCODING=cp1252:surrogateescape`. | The test child prints `ascii()` escapes; the check decodes them and also requires exit 0. Passes under default, cp1252 and cp936 output encodings; a mutated wrapper that joins arguments still fails 6 checks. | Fixed (PowerShell on Linux); Windows CI pending |
+| P0 (review): `preflight.py` printed `.pth` bytes as hex and absolute interpreter/site-packages paths; the macOS prompt asked for `xxd` output and "copy verbatim" | Hex of a path is the path. | Default output describes `.pth` lines by structure (bytes, UTF-8 validity, CJK chars, spaces, short salted hash) and replaces interpreter/site-packages/error paths; `--private-details` (opt-in, with a warning) shows raw data for local use. Tests check that plain, UTF-8/UTF-16 hex, escapes, URL-quoted and file-URL forms of a secret path and user name do not appear, and that ordinary URLs and error messages survive. `test_osenv` no longer prints the absolute `site.py` path. Prompts no longer ask for hex or raw paths. Redaction is best effort. | Fixed |
+| P1 (review): `install_check.py --pip-args` split on whitespace | Paths with spaces became several arguments. | New repeatable `--pip-arg=ARG` (one argv element each, no shell). Old `--pip-args` accepted only for plain flags; refused (exit 2, nothing created) when it contains quotes or path-like values. Fake-pip tests check the exact argv, Chinese/space wheelhouse paths and exit-code passthrough. | Fixed |
+
+## 0-W. Gate for the Windows machine stage (decision by the user)
+
+| Criterion | State (2026-11-08) |
+|---|---|
+| CI of the candidate green on all 10 jobs, every skip explained | **Not yet**: v0.3.7 has not run in CI |
+| macOS 3.11 and 3.12 fresh install from the candidate, with and without OCR, Chinese/space paths, preflight, offline workflow, interrupt/resume, Preview replacement | **Not yet** (prompt ready: `docs/testing/MACOS_RETEST_PROMPT.md`) |
+| Linux fresh install and offline workflow on a real machine (not only containers/CI) | **Partly**: container + CI only (prompt: `docs/testing/LINUX_RETEST_PROMPT.md`) |
+| OCR present/absent and font missing give clear statuses, never a silent `pass` | Covered by tests on Linux/CI; to be confirmed on the Mac |
+| Interrupted runs leave consistent state and resume | Real SIGINT/SIGKILL test on Linux (§4); Mac pending |
+| Privacy: no local paths in reports, diagnostics or retest feedback | Tests on Linux; best effort |
+| At least a few licence-clear real PDFs with reviewed comparisons | **Not yet** (rules and validator only) |
+| Known gaps listed: Mac Intel (CI only), Linux x64 (CI only), legacy locales on macOS (user machine only) | Listed here |
+
+Meeting the gate means "ready for Windows machine tests", not "production ready".
 
 ## 0-R. v0.3.5 (`07ed2df`) on CI and real machines, and what v0.3.6 changes
 
@@ -182,6 +223,21 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 4. Test results
 
+### v0.3.7.dev0, this environment (Linux aarch64 container)
+
+242 tests (30 new). pyflakes clean. Run in four chunks per interpreter (sandbox time limit); totals:
+
+| Interpreter | Result | Skips |
+|---|---|---|
+| CPython 3.10.12 (Ubuntu), dev tree | 240 passed, 2 skipped | Windows native lock; real-PDF corpus not present |
+| CPython 3.11.18, regular install in a Chinese/space folder | 240 passed, 2 skipped | same |
+| CPython 3.12.16, regular install in a Chinese/space folder | 240 passed, 2 skipped | same |
+| PowerShell 7.6.9 (Linux), `tools/test_run_logged.ps1`, output encodings default / cp1252 / cp936 | 11/11 each | – |
+
+The offline install test ran on all three (local setuptools 79.0.1 wheel from the 3.11.18 ensurepip bundle via `PATT_TEST_WHEELHOUSE`). New real-process tests: SIGINT and SIGKILL in the middle of a 5-file render in a Chinese/space path — exit non-zero, sources byte-identical, every visible output/JSON complete, 0 temp leftovers, re-run finishes all 5 (2 done before, 5 after). Long-path workflow (~180-byte paths, Chinese and spaces): plan/budget refusal/translate/cache re-run/render/report/compare/publish twice (no overwrite)/stale plan, sources unchanged, no temp files.
+
+Mutations caught: wrapper joining arguments (6 checks fail); install_check without the build-backend check (1 test), with whitespace splitting (2 tests).
+
 ### v0.3.6.dev0, this environment (Linux aarch64 container)
 
 212 tests (15 new). pyflakes clean.
@@ -326,6 +382,7 @@ The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, 
 
 ## 7. Compatibility notes
 
+* v0.3.7: no engine or CLI behaviour change. `tools/install_check.py`: `--pip-arg=ARG` (repeatable) replaces whitespace-split `--pip-args` for anything but plain flags; exit 3 when the target cannot build with `--no-build-isolation`. `tools/preflight.py`: no local paths by default (`--private-details` for local use). New `tools/corpus_check.py`.
 * v0.3.6: no engine or CLI behaviour change. New tools: `tools/preflight.py`, `tools/install_check.py`, `tools/run_logged.ps1` (+ self-test). The encoding probe exits 3 when the fixture generator fails.
 * v0.3.5: no engine change. CLI output on non-UTF-8 consoles now always escapes unencodable characters (previously only for the `strict` handler). `osenv.font_search_dirs(…, os_name=<other OS>)` returns pure paths of that OS.
 * v0.3.4: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`). `platform_info()`/`doctor` gained `pth_strategy`, `pth_locale_encoding`, `site_frozen`. A missing OpenCV during planning is a skipped page note (`page_not_processed`), not a planning error.

@@ -1,7 +1,8 @@
 # Offline test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual
-# backends only. Runs so far: ca38a93 (run 42396678823): Linux 3/3, macOS 4/4 passed, Windows 0/3
-# (5 tests each); 07ed2df (run 42459411475): 10/10 jobs passed. Steps added after 07ed2df (preflight,
-# PowerShell wrapper self-test, non-ASCII temp folder) have NOT run in CI yet.
+# backends only. Runs so far: ca38a93 (run 42396678823): Linux 3/3, macOS 4/4, Windows 0/3;
+# 07ed2df (run 42459411475): 10/10; ae9c671 (run 42480633442): 5/10 - macOS 3.11 x2 (offline install
+# test: setuptools 65.5 without `wheel`), Windows x3 (wrapper self-test: child Python could not print
+# Chinese to a cp1252 log). Both fixed afterwards; the fixes have NOT run in CI yet.
 #
 # Dependency wheels per runner were checked on PyPI on 2026-11-07 (see the windows-11-arm entry).
 # Runner labels were checked on 2026-11-07 against github.com/actions/runner-images (README
@@ -126,6 +127,11 @@ jobs:
 
       - name: Install (regular, non-editable)
         run: python -m pip install ".[${{ matrix.extras || 'ocr,dev' }}]"
+      - name: Build-backend wheelhouse for the offline install test (setuptools>=70.1 from PyPI)
+        run: |
+          python -m pip download --only-binary=:all: --no-deps --dest "$RUNNER_TEMP/wheelhouse" "setuptools>=70.1"
+          ls "$RUNNER_TEMP/wheelhouse"
+          echo "PATT_TEST_WHEELHOUSE=$RUNNER_TEMP/wheelhouse" >> "$GITHUB_ENV"
       - name: Verify OCR state
         run: python tools/ci_check_ocr.py ${{ matrix.ocr && 'expect-present' || 'expect-absent' }}
       - name: Environment report

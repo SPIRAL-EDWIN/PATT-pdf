@@ -19,13 +19,18 @@ function Code([string]$name) {
 }
 function Log([string]$name) { Get-Content -LiteralPath (Join-Path (Join-Path $T "logs") "$name.txt") -Raw -Encoding utf8 }
 
-$argv = 'import sys; print(repr(sys.argv[1:])); sys.exit(int(sys.argv[1]) if sys.argv[1:] and sys.argv[1].isdigit() else 0)'
+# ascii(): the child's stdout is redirected to a file; on Windows with a legacy ANSI code page
+# (CI runners: cp1252) printing '报告' raised UnicodeEncodeError in the CHILD, so the log had a
+# traceback instead of the argument list (CI run 42480633442, 'multi 1'). The check is about the
+# wrapper passing arguments, so the child prints \u escapes and the check decodes them.
+$argv = 'import sys; print(ascii(sys.argv[1:])); sys.exit(int(sys.argv[1]) if sys.argv[1:] and sys.argv[1].isdigit() else 0)'
 $script = Join-Path $T 'argv.py'; Set-Content -LiteralPath $script -Value $argv -Encoding utf8
 
 Run one $py --version | Out-Null
 Check 'single argument is passed whole (not split into characters)' ((Code one) -eq '0' -and (Log one) -match 'Python 3\.')
 Run multi $py $script 'a b' '报告 2026 – résumé.pdf' "$T\空格 目录" | Out-Null
-Check 'several arguments, with spaces and Chinese, each stays one argument' ((Log multi) -match "\['a b', '报告 2026 – résumé.pdf', '.+空格 目录'\]")
+$multi = [regex]::Unescape(((Log multi) -replace '\\x([0-9a-f]{2})', '\u00$1'))
+Check 'several arguments, with spaces and Chinese, each stays one argument (exit 0)' ((Code multi) -eq '0' -and $multi -match "\['a b', '报告 2026 – résumé.pdf', '.+空格 目录'\]")
 Run nonzero $py $script 7 | Out-Null
 Check 'non-zero exit code is recorded' ((Code nonzero) -eq '7')
 Run zero-after $py $script 0 | Out-Null

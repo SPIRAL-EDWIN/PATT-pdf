@@ -12,7 +12,7 @@
 
 </div>
 
-> **实验性项目 · v0.3.6.dev0。** 当前是命令行原型，还不是完整的桌面应用。上一版（v0.3.5）已通过 Linux、macOS、Windows 的 CI，并在一台 Mac 和一台 Windows 电脑上离线复测；本版修复了复测中发现的问题，目前只在 Linux 上测试过。尚未验证真实 PDF，也未进行真实 DeepL 请求。输出可能不完整或有误，请务必人工复核。详见[平台验证状态](docs/STATUS.md)。
+> **实验性项目 · v0.3.7.dev0。** 当前是命令行原型，还不是完整的桌面应用。现阶段优先完善 macOS 和 Linux。本版本仅在 Linux 上使用合成 PDF 离线测试，尚未在 CI 和 Mac 上运行；Windows 实机测试暂缓。尚未验证真实 PDF，也未进行真实 DeepL 请求。输出可能不完整或有误，请务必人工复核。详见[平台验证状态](docs/STATUS.md)。
 
 ## 效果预览
 
@@ -95,7 +95,7 @@ patt-pdf doctor
 
 </details>
 
-`patt-pdf fonts` 将本机已有字体复制到当前用户目录，不会自动下载字体。`doctor` 会报告字体、Tesseract 和环境警告。如果连 `patt-pdf` 都无法启动（例如 Python 3.11、非 UTF-8 区域设置、从中文目录做的可编辑安装），请用同一个 Python 运行 `python -S tools/preflight.py`：它只依赖标准库，并会给出恢复建议。自定义路径及编码注意事项见[详细安装说明](docs/REFERENCE.md#install)。
+`patt-pdf fonts` 将本机已有字体复制到当前用户目录，不会自动下载字体。`doctor` 会报告字体、Tesseract 和环境警告。如果连 `patt-pdf` 都无法启动（例如 Python 3.11、非 UTF-8 区域设置、从中文目录做的可编辑安装），请用同一个 Python 运行 `python -S tools/preflight.py`：它只依赖标准库，默认输出不含本机路径，并会给出恢复建议。自定义路径及编码注意事项见[详细安装说明](docs/REFERENCE.md#install)。
 
 ## 快速开始
 

@@ -1,4 +1,4 @@
-# 给 macOS 上 Codex 的完整复测提示词：PATT-PDF v0.3.6.dev0
+# 给 macOS 上 Codex 的完整复测提示词：PATT-PDF v0.3.7.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -11,16 +11,17 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置；有 QA 状态和退出码。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.6.dev0，实验性开发版，不是稳定版。本版只在 Linux aarch64 上测试过（CPython 3.10.12、3.11.18、3.12.16）。**本版从未在 macOS 上运行过。**
+- **版本：**v0.3.7.dev0，实验性开发版，不是稳定版。本版只在 Linux aarch64 上测试过（CPython 3.10.12、3.11.18、3.12.16，各 240 passed / 2 skipped）。**本版从未在 macOS 上运行过。**
+- **当前优先级：**先完善 macOS 和 Linux；Windows 实机测试暂缓。本次复测是进入 Windows 阶段门槛（`docs/STATUS.md` §0-W）的一部分。
 - **三类证据，报告中必须分开写，不能互相替代：**
-  1. **GitHub 云端 CI**：在 GitHub 的 macOS 云端机器上运行，不是用户的 Mac。上一版 v0.3.5（`07ed2df`，run 42459411475）10/10 个任务通过，其中 macos-15 arm64（3.11 无 OCR、3.12 有 OCR）和 macos-15-intel（3.11 有 OCR）。v0.3.6 **尚未在 CI 运行**。CI 机器没有非 UTF-8 locale，所以 locale 相关测试在那里不会运行。
+  1. **GitHub 云端 CI**：GitHub 的 macOS 云端机器，不是用户的 Mac。上一版 v0.3.6（`ae9c671`，run 42480633442）：macos-15 3.12（有 OCR）通过；macos-15 3.11（无 OCR）和 macos-15-intel 3.11（有 OCR）各有 1 项失败——离线安装测试中，python.org 3.11.9 的 venv 只有 setuptools 65.5、没有 `wheel`（`invalid command 'bdist_wheel'`），本版已修复。v0.3.7 **尚未在 CI 运行**。CI 机器没有非 UTF-8 locale。
   2. **本次在用户 Mac 上的实测**：只有你亲手运行、有日志的项目才算。
   3. **模拟和跳过**：pytest 中的模拟测试和 SKIP 项都不等于实测。
-- **上一轮（v0.3.5，本机实测）结果：**两个 Python 版本有 OCR 197 passed / 1 skipped，无 OCR 192 / 6；M4–M7b 通过。**M3 失败项：**3.11 + en_US.ISO8859-1 / zh_CN.GBK + 中文目录的可编辑安装无法导入，`python -m patt_pdf.cli doctor` 也无法启动。
-- **v0.3.6 的处理（需要你确认）：**
-  - 这种组合**仍然不受支持**（3.11 的 site.py 按 locale 编码读取 `.pth`，`PYTHONUTF8=1` 无效），本版不承诺修复导入。
-  - 新增 `tools/preflight.py`：只依赖标准库，用 `python -S` 启动，在 doctor 无法运行的环境里也能诊断；它分别报告“解释器能否启动”“能否导入 patt_pdf”“每条中文 `.pth` 的预测结果”和恢复方法。
-  - 另有两个 Windows 侧修复（测试工具的输出编码、安装辅助脚本），macOS 上应无行为变化，需要回归确认。
+- **v0.3.7 需要你在 Mac 上确认的改动：**
+  - `tools/preflight.py` 默认**不输出本机路径**（`.pth` 只报告长度、是否 UTF-8、中文字符数、空格数、短哈希）；
+  - `tools/install_check.py` 新增 `--pip-arg=参数`（每个参数一个，含空格的路径保持完整），并在 `--no-build-isolation` 时先检查目标环境能否构建；
+  - 新增真实进程中断测试（SIGINT/SIGKILL）和长中文路径全流程测试。
+- **上一轮（v0.3.5，本机实测）结果：**两个 Python 版本有 OCR 197 passed / 1 skipped，无 OCR 192 / 6；M3：3.11 + 旧 locale + 中文目录的可编辑安装无法导入（**仍不受支持**，用 preflight 诊断）。
 - **历次在 macOS 上发现的问题（需要你复测）：**
   - v0.3.1：缺少 OCR 时出现 `KeyError`；编码探针失败；Python 3.11 + ISO8859-1 + 中文路径的可编辑安装无法导入。
   - v0.3.2：两个测试失败，原因是测试本身的假设错误。
@@ -68,7 +69,7 @@ git -C "$T/PATT-pdf" status --short          # 必须为空
 
 **B. 离线 bundle（尚未推送时使用；用户通过 U 盘、私人网盘等可信途径提供文件、SHA-256 和完整 commit）：**
 ```bash
-B=/path/to/patt-pdf-0.3.6.dev0-<短SHA>.bundle
+B=/path/to/patt-pdf-0.3.7.dev0-<短SHA>.bundle
 shasum -a 256 "$B"                           # 必须与用户给的 SHA-256 一致
 git bundle list-heads "$B"                   # HEAD 与 refs/heads/main 都必须等于用户给的 commit
 git clone "$B" "$T/PATT-pdf"
@@ -96,7 +97,7 @@ PY=python3.12; V=312            # 第二遍改为 python3.11 / 311
 "$PY" -m venv "$T/venv$V" && . "$T/venv$V/bin/activate"
 python -m pip install --upgrade pip
 run install-$V pip install "$T/PATT-pdf[ocr,dev]"         # 普通（非 editable）安装
-run version-$V patt-pdf --version                          # 预期：patt-pdf 0.3.6.dev0
+run version-$V patt-pdf --version                          # 预期：patt-pdf 0.3.7.dev0
 python -c "import sys,pymupdf,numpy,fontTools,cv2;print(sys.version.split()[0],pymupdf.VersionBind,numpy.__version__,fontTools.version,cv2.__version__)"
 pip list 2>/dev/null | grep -i -E "^(setuptools|pyyaml|pytest) "
 ```
@@ -137,6 +138,8 @@ PATT_PDF_TESSERACT="$T/no-tesseract-here" run pytest-noocr-$V python -m pytest -
 - 总会跳过：`test_native_windows_lock`（仅限 Windows）。
 - 没有任何非 UTF-8 locale 时：`test_pipeline_in_legacy_posix_locales`、`test_pth_decoding_matches_the_interpreters_own_rule`。
 - 无 OCR 时另外跳过 5 项，原因写明 tesseract/opencv/OCR。
+- 仓库里还没有真实 PDF 语料：`test_repository_corpus_if_present`。
+- 离线安装测试 `test_real_install_into_a_fresh_venv` 只在本机找不到 setuptools ≥ 70.1 的 wheel 时跳过；跳过原因要原样记录。
 
 除此之外的任何跳过或失败，都要逐条报告：测试名、断言和日志尾部。
 
@@ -151,7 +154,7 @@ grep -A12 "pth decoding (" "$T/logs/m1-$V.txt"
 grep "site.addpackage strategy" "$T/logs/m1-$V.txt"
 ```
 - **预期：**全部 PASS。
-- 把 `pth decoding (...)` 下面每一行，以及 `site.addpackage strategy` 这一行，**原样抄入报告**。
+- 把 `pth decoding (...)` 下面每一行，以及 `site.addpackage strategy` 这一行抄入报告。这些行只含版本、编码和结果，不含路径；抄写前仍要检查一遍。
 - **依据 CPython 源码和 Linux 实测的判断**（请以实际输出为准）：
   - 3.12.4 及以上应为 `utf8-first`，3.11.x 应为 `locale`；python.org 和 Homebrew 的构建中 `frozen=True` 很常见。
   - macOS 的文件系统编码总是 UTF-8，所以 3.12.4+ 在 GBK 下预计 `found`；3.11 在 GBK 下预计 `error`（`PYTHONUTF8=0/1` 都一样），在 ISO8859-1 下预计 `missing`。
@@ -165,7 +168,7 @@ import os, sys, subprocess, pathlib
 T = pathlib.Path(sys.argv[1]) / "pthprobe"; site = T / "site"; pkg = T / "源码 目录" / "pthprobe_pkg"
 pkg.mkdir(parents=True, exist_ok=True); site.mkdir(parents=True, exist_ok=True); (pkg / "__init__.py").write_text("")
 line = str(T / "源码 目录").encode("utf-8"); (site / "probe.pth").write_bytes(line + b"\n")
-print("pth bytes (hex, first 40):", line[:40].hex())
+print("pth line:", len(line), "bytes, ascii:", line.isascii())   # never print the bytes: they ARE your path
 child = ("import io,sys,site,locale,importlib.util as u\n"
          "def k(co):\n for c in co.co_consts:\n  yield from (k(c) if hasattr(c,'co_consts') else [c])\n"
          "s=[c for c in k(site.addpackage.__code__) if isinstance(c,str)]\n"
@@ -183,7 +186,7 @@ for loc in ["C.UTF-8", "en_US.UTF-8", "en_US.ISO8859-1", "zh_CN.GBK", "zh_CN.euc
         print(f"{loc:16s} PYTHONUTF8={m}:", (r.stdout.strip() or r.stderr.strip()[-200:]))
 EOF
 ```
-- 把输出原样抄入报告。这是判断 macOS 上真实行为的一手证据。
+- 把输出抄入报告（每行只含版本、编码和 found/missing/error，不含路径）。这是判断 macOS 上真实行为的一手证据。抄写前仍要检查一遍，不要包含用户名或私人目录。
 - 不存在的 locale 会被 macOS 静默忽略，此时 `getencoding` 仍会是 UTF-8。如实记录即可，不要把它当成异常。
 
 **M3：可编辑安装、普通安装与独立预检**（上一轮的失败项；每个 Python 版本都做）
@@ -200,9 +203,9 @@ for LOC in en_US.ISO8859-1 zh_CN.GBK; do for M in 0 1; do
 done; done
 LC_ALL=en_US.ISO8859-1 PYTHONUTF8=0 run m3-doctor-$V "$T/venv-edit$V/bin/python" -m patt_pdf.cli doctor
 run m3-pytest-$V python -m pytest -q -p no:cacheprovider -rA -s "$T/PATT-pdf/tests/test_preflight.py"
-xxd "$T/venv-edit$V/lib/python"*/site-packages/__editable__*.pth | head -3
 ```
 - 整理成表：Python 版本 × locale × `PYTHONUTF8` → 解释器启动 / 可编辑安装导入 / 普通安装导入 / preflight 退出码与“diagnosis”首行。
+- **隐私：**preflight 默认输出不含路径（`.pth` 只报告长度、是否 UTF-8、中文字符数、空格数和短哈希）。**不要**使用 `--private-details`、`xxd` 或 `hexdump` 把 `.pth` 内容放进报告：十六进制就是你的目录路径，可以完全还原。确需原始字节时，只保存在本机私有位置。
 - **判定规则：**
   - preflight 结论与实际一致（实际无法导入时 exit 1 并给出恢复步骤；能导入时 exit 0）→ PASS。
   - 3.11 可编辑安装在旧 locale 下无法导入，是**已知不支持的组合**：记为“不支持（符合预期）”，不是 PASS，也不是新的产品失败。
@@ -287,6 +290,21 @@ PYTHONIOENCODING=cp1252:surrogateescape run m7c-gen-$V python tests/fixtures/mak
 ```
 - 预期：全部 PASS；`m7c-gen` exit=0，输出中有 `wrote 13 fixtures`。这是**模拟**，报告中要这样写。
 
+**M9：真实进程中断与续跑、长中文路径全流程（v0.3.7 新增）**
+```bash
+run m9-$V python -m pytest -q -p no:cacheprovider -rA -s tests/test_process_interrupt.py tests/test_workflow_paths.py
+grep -E "^SIG" "$T/logs/m9-$V.txt"
+```
+- 预期：全部 PASS；`SIGINT`、`SIGKILL` 两行都显示 `before=<小于5> after=5 tmp-leftovers=0`。
+- 再在终端里亲手做一次（真实 Ctrl+C）：
+  ```bash
+  S9="$T/state-m9-$V"; patt-pdf plan "$IN" --state "$S9" --no-ocr >/dev/null; patt-pdf translate "$IN" --state "$S9" --backend manual --manual-tm "$TM" --max-chars 99999 >/dev/null
+  patt-pdf render "$IN" --state "$S9" --backend manual --manual-tm "$TM"; echo "exit=$?"     # 输出两三行后按 Ctrl+C
+  ls -a "$S9/out" | grep -c '^\.tmp-'                                                       # 预期 0
+  run m9-resume-$V patt-pdf render "$IN" --state "$S9" --backend manual --manual-tm "$TM"    # 预期 exit=1（样本中有故意损坏的文件）
+  ```
+  记录 Ctrl+C 后的退出码（预期非 0），以及续跑后各文件状态是否与 M4 的表一致。
+
 **M8：中文路径、视觉效果与链接**
 ```bash
 run m8-cmp-$V patt-pdf compare "$IN" --state "$S" --out "$T/cmp$V" --files "t*"
@@ -301,7 +319,7 @@ python -c "import pymupdf,sys; o=pymupdf.open(sys.argv[1]); print([sorted(l['uri
 ## 7. 保存证据与清理
 
 - **证据：**把 `$T/logs/`、`$T/report-*.md` 和截图复制到**用户指定的私有位置**（不要放进仓库，也不要上传）。
-- **脱敏：**用户名替换为 `<USER>`，home 路径替换为 `<HOME>`。
+- **脱敏：**用户名替换为 `<USER>`，home 路径替换为 `<HOME>`；不要附带 `.pth` 的十六进制、`--private-details` 输出或任何能还原私人目录的编码形式（URL 编码、`\u` 转义等）。分享前逐行检查；脱敏工具只是尽力而为。
 - **清理：**用户确认后执行下面的命令。不要卸载 Homebrew 软件包或字体，不要清理全局缓存。
   ```bash
   deactivate 2>/dev/null; echo "将删除：$T"; rm -rf "$T"
@@ -321,8 +339,8 @@ doctor（各版本，脱敏）：<…，含 pth_strategy / pth_locale_encoding>
 
 pytest 3.11 有OCR / 无OCR：n passed / n failed / n skipped（逐条列出跳过原因）
 pytest 3.12 有OCR / 无OCR：…
-M1 .pth 测试 ........... PASS/FAIL/SKIP   strategy 行 + pth decoding 各行（原样）
-M2 解释器实测 .......... 原样输出（各版本）
+M1 .pth 测试 ........... PASS/FAIL/SKIP   strategy 行 + pth decoding 各行（不含路径；抄前检查）
+M2 解释器实测 .......... 输出（各版本；不含路径）
 M3 安装/启动/导入/预检 .. 表：版本 × locale × PYTHONUTF8 → 启动 / 可编辑导入 / 普通导入 / preflight（exit + 诊断）；doctor：预期失败/其他
 M4 无OCR批处理 ......... PASS/FAIL  c1 exit=<…>  KeyError=<…>  状态表偏差：<…>
 M5 有OCR .............. PASS/FAIL/SKIP
@@ -331,8 +349,9 @@ M7 路径脱敏 ............ PASS/FAIL
 M7b 输出编码（模拟） .... PASS/FAIL
 M7c 测试工具 R01（模拟） PASS/FAIL
 M8 视觉/链接 ........... PASS/FAIL（截图位置：私有）
+M9 中断/续跑/长路径 .... pytest PASS/FAIL；SIG 行：<…>；手动 Ctrl+C exit=<…>，.tmp 残留=<…>，续跑 exit=<…>
 _exitcodes.txt：<粘贴>
 
 每个 FAIL：最小复现命令 / 预期 / 实际 / 日志位置（私有）
-未验证项：真实 PDF、真实翻译 API、跨卷、信号中断、<其他>
+未验证项：真实 PDF、真实翻译 API、跨卷、<其他>
 ```

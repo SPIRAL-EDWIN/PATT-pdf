@@ -11,6 +11,8 @@ import json
 import os
 import sys
 
+from pathlib import Path
+
 import pytest
 
 from patt_pdf import osenv
@@ -370,7 +372,8 @@ def test_pth_strategy_detection_on_this_interpreter():
     import site
     strat = osenv.pth_strategy()
     frozen = osenv.site_is_frozen()
-    print("site.addpackage strategy:", strat, "python", sys.version.split()[0], "frozen", frozen, "site", site.__file__)
+    tail = "/".join(Path(site.__file__).parts[-2:])           # e.g. python3.12/site.py: no local path in reports
+    print("site.addpackage strategy:", strat, "python", sys.version.split()[0], "frozen", frozen, "site", tail)
     assert strat in ("utf8-first", "locale"), strat
     try:
         text = open(site.__file__, encoding="utf-8").read()

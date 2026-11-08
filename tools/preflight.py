@@ -11,6 +11,10 @@ interpreter itself with `-S` (skip site.py):
     <venv>\\Scripts\\python.exe -S tools\\preflight.py     # Windows
     python3 -S tools/preflight.py --python <other python>  # check another interpreter
 
+By default the output contains NO local paths: the interpreter, site-packages and .pth lines are
+described by structure (length, UTF-8 validity, CJK/space counts, a short hash), so it can be
+pasted into a report. `--private-details` adds the raw paths and bytes for your own use only.
+
 It reports, separately: (1) does the interpreter start in this environment and locale,
 (2) can it import patt_pdf, (3) for each `.pth` file with a non-ASCII path: how this
 interpreter's site.py decodes it, and the predicted result, (4) recovery steps.
@@ -104,7 +108,28 @@ def _last_line(text: str) -> str:
     return lines[-1].strip()[:240] if lines else ""
 
 
-def check(python: str, site_dirs: list[str] | None = None) -> dict:
+def describe_line(line: bytes) -> dict:
+    """What is needed to diagnose a .pth line WITHOUT the path itself (review finding: the hex
+    of the line is the user's folder path, fully reversible). Length, which byte classes occur,
+    whether it is valid UTF-8, and a short salted hash that lets the user compare two of their
+    own reports without revealing the path (the salt is fixed, so it is not a secret: do not
+    treat the hash as anonymisation of guessable paths)."""
+    import hashlib
+    info = {"bytes": len(line), "ascii": line.isascii()}
+    try:
+        text = line.decode("utf-8")
+        info["utf8"] = True
+        info["non_ascii_chars"] = sum(1 for c in text if ord(c) > 127)
+        info["cjk_chars"] = sum(1 for c in text if "\u3000" <= c <= "\u9fff" or "\uf900" <= c <= "\ufaff")
+        info["spaces"] = text.count(" ")
+    except UnicodeDecodeError as e:
+        info["utf8"] = False
+        info["first_bad_byte_at"] = e.start
+    info["sha256_12"] = hashlib.sha256(b"patt-preflight:" + line).hexdigest()[:12]
+    return info
+
+
+def check(python: str, site_dirs: list[str] | None = None, private: bool = False) -> dict:
     py = str(python)
     res: dict = {"python": py, "checks": {}, "pth": [], "problems": [], "recovery": []}
     rc, out, err = _run([py, "-S", "-c", _PROBE])
@@ -139,9 +164,12 @@ def check(python: str, site_dirs: list[str] | None = None) -> dict:
                 line = raw.strip()
                 if not line or line.startswith(b"#") or line.startswith(b"import ") or line.isascii():
                     continue
-                res["pth"].append({"file": pth.name, "line_hex": line[:48].hex(),
-                                   "predicted": predict(facts["strategy"], facts["locale_text_encoding"],
-                                                        line, facts["fs_encoding"])})
+                entry = {"file": pth.name, "line": describe_line(line),
+                         "predicted": predict(facts["strategy"], facts["locale_text_encoding"],
+                                              line, facts["fs_encoding"])}
+                if private:
+                    entry["line_hex_PRIVATE"] = line.hex()
+                res["pth"].append(entry)
 
     bad = [p for p in res["pth"] if p.get("predicted") in ("error", "missing")]
     editable = any(p["file"].startswith("__editable__") for p in res["pth"])
@@ -154,7 +182,43 @@ def check(python: str, site_dirs: list[str] | None = None) -> dict:
         res["problems"].append("a .pth line is predicted not to resolve; another package may be affected")
     if res["problems"]:
         res["recovery"] = recovery_steps(facts, editable, bool(bad))
+    if not private:
+        _redact_result(res)
     return res
+
+
+def _redact(text: str) -> str:
+    """Remove absolute paths, file URLs, the home folder and the user name from free text.
+    Best effort (see README): unusual quoting or paths split across lines can survive.
+    URLs other than file:// are kept."""
+    import re
+    home = os.path.expanduser("~")
+    for h in sorted({home, home.replace("\\", "/")}, key=len, reverse=True):
+        if len(h) > 3:
+            text = text.replace(h, "~")
+    text = re.sub(r"file:/{2,3}[^\s'\"<>]+", "<file-url>", text, flags=re.IGNORECASE)
+    # quoted absolute paths: the whole quoted string (keeps spaces inside the quotes together)
+    text = re.sub(r"(['\"])(?:[A-Za-z]:[\\/]|[\\/]{1,2}|~[\\/])[^'\"]*\1", lambda m: m.group(1) + "<path>" + m.group(1), text)
+    # unquoted absolute paths (POSIX, C:\\…, \\\\server\\…), not URLs (scheme://host/…); a path may
+    # contain single spaces between non-space parts
+    seg = r"[^\\/\s'\"<>:|]+(?: [^\\/\s'\"<>:|-][^\\/\s'\"<>:|]*)*"
+    text = re.sub(r"(?<![\w:/\\])(?:[A-Za-z]:|[\\/]{2}[^\\/\s]+)?(?:[\\/]" + seg + r"){2,}[\\/]?", "<path>", text)
+    text = re.sub(r"~[\\/]" + seg + r"(?:[\\/]" + seg + r")*", "<path>", text)
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or ""
+    if len(user) > 2:
+        text = re.sub(re.escape(user), "<user>", text, flags=re.IGNORECASE)
+    return text
+
+
+def _redact_result(res: dict) -> None:
+    res["python"] = "<python>"
+    f = res.get("facts", {})
+    if "executable" in f:
+        f["executable"] = "<python>"
+    res["site_packages"] = [f"<site-packages #{i + 1}>" for i, _ in enumerate(res.get("site_packages", []))]
+    res["checks"] = {k: _redact(v) for k, v in res["checks"].items()}
+    res["problems"] = [_redact(x) for x in res["problems"]]
+    res["redacted"] = True
 
 
 def recovery_steps(facts: dict, editable: bool, pth_problem: bool) -> list[str]:
@@ -185,8 +249,14 @@ def main(argv=None) -> int:
     ap.add_argument("--python", default=sys.executable, help="interpreter to check (default: the one running this)")
     ap.add_argument("--site-packages", action="append", help="site-packages folder(s) to inspect (default: the venv's)")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
+    ap.add_argument("--private-details", action="store_true",
+                    help="also print local paths and the raw .pth bytes (hex). For your own machine only: "
+                         "the hex IS your folder path. Never paste this output into a public report")
     a = ap.parse_args(argv)
-    res = check(a.python, a.site_packages)
+    res = check(a.python, a.site_packages, private=a.private_details)
+    if a.private_details:
+        print("WARNING: --private-details output contains your local paths (also as hex). Keep it private.",
+              file=sys.stderr)
     if a.json:
         print(json.dumps(res, ensure_ascii=True, indent=1))
     else:
@@ -197,7 +267,12 @@ def main(argv=None) -> int:
         for k, v in res["checks"].items():
             print(f"  {k:30s} {v}")
         for p in res["pth"]:
-            print(f"  .pth {p['file']}: non-ASCII path, predicted {p.get('predicted', p.get('error'))}")
+            ln = p.get("line", {})
+            print(f"  .pth {p['file']}: non-ASCII path ({ln.get('bytes', '?')} bytes, utf8={ln.get('utf8', '?')}, "
+                  f"cjk={ln.get('cjk_chars', '?')}, spaces={ln.get('spaces', '?')}, id={ln.get('sha256_12', '?')}), "
+                  f"predicted {p.get('predicted', p.get('error'))}")
+            if "line_hex_PRIVATE" in p:
+                print(f"    PRIVATE raw bytes (hex): {p['line_hex_PRIVATE']}")
         if res["problems"]:
             print("diagnosis:")
             for p in res["problems"]:

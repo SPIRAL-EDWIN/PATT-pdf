@@ -12,7 +12,7 @@ Translate English PDFs into Simplified Chinese, with the translated text placed 
 
 </div>
 
-> **Experimental · v0.3.6.dev0.** This is a command-line prototype, not a finished desktop app. The previous version (v0.3.5) passed CI on Linux, macOS and Windows and was re-tested offline on a Mac and a Windows PC; this version fixes what those retests found and has so far been tested only on Linux. Nothing has been verified on real-world PDFs or with a real DeepL request. Results can be incomplete or inaccurate: always review the output. See [platform status](docs/STATUS.md).
+> **Experimental · v0.3.7.dev0.** This is a command-line prototype, not a finished desktop app. Current focus: macOS and Linux. This version has been tested offline on synthetic PDFs on Linux only; it has not yet run in CI or on a Mac, and Windows machine tests are on hold. Nothing has been verified on real-world PDFs or with a real DeepL request. Results can be incomplete or inaccurate: always review the output. See [platform status](docs/STATUS.md).
 
 ## Preview
 
@@ -95,7 +95,7 @@ patt-pdf doctor
 
 </details>
 
-`patt-pdf fonts` copies locally available fonts into a per-user directory; it does not download them. `doctor` reports detected fonts, Tesseract and environment warnings. If `patt-pdf` cannot even start (for example an editable install from a non-ASCII folder on Python 3.11 with a non-UTF-8 locale), run `python -S tools/preflight.py` with the same Python: it needs only the standard library and suggests a recovery. See [font and installation details](docs/REFERENCE.md#install) for custom paths and encoding caveats.
+`patt-pdf fonts` copies locally available fonts into a per-user directory; it does not download them. `doctor` reports detected fonts, Tesseract and environment warnings. If `patt-pdf` cannot even start (for example an editable install from a non-ASCII folder on Python 3.11 with a non-UTF-8 locale), run `python -S tools/preflight.py` with the same Python: it needs only the standard library, prints no local paths by default, and suggests a recovery. See [font and installation details](docs/REFERENCE.md#install) for custom paths and encoding caveats.
 
 ## Quick start
 
