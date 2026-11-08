@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -80,20 +79,50 @@ def test_windows_font_order_env_user_system_without_duplicates():
            "WINDIR": "C:\\Windows"}
     d = [str(p) for p in osenv.font_search_dirs(env, "windows", home="C:\\Users\\a")]
     assert d[:2] == ["D:\\fonts", "E:\\more"]
-    user = d.index(str(Path("C:\\Users\\a\\AppData\\Local") / "Microsoft" / "Windows" / "Fonts"))
-    system = d.index(str(Path("C:\\Windows") / "Fonts"))
+    user = d.index("C:\\Users\\a\\AppData\\Local\\Microsoft\\Windows\\Fonts")    # Windows rules on any host
+    system = d.index("C:\\Windows\\Fonts")
     assert user < system
-    assert len(d) == len({os.path.normcase(x) for x in d})
+    import ntpath
+    assert len(d) == len({ntpath.normcase(x) for x in d})
     assert not any(x.startswith("/") for x in d)                  # no POSIX folders on Windows
 
 
+def _posix(paths):
+    """Compare simulated macOS/Linux folders by their POSIX form, whatever the host is."""
+    return [p.as_posix() for p in paths]
+
+
 def test_macos_and_linux_orders_user_before_system():
-    mac = [str(p) for p in osenv.font_search_dirs({}, "macos", home="/Users/a")]
+    """Windows CI finding (ca38a93): on a Windows host the simulated macOS list contained
+    '\\Users\\a\\Library\\Fonts' (host os.path + Path), so '/Users/a/Library/Fonts' was not found.
+    Simulated folders must follow the TARGET OS's path rules on every host."""
+    mac = _posix(osenv.font_search_dirs({}, "macos", home="/Users/a"))
     assert mac.index("/Users/a/Library/Fonts") < mac.index("/Library/Fonts")
-    lin = [str(p) for p in osenv.font_search_dirs({}, "linux", home="/home/a")]
+    lin = _posix(osenv.font_search_dirs({}, "linux", home="/home/a"))
     assert lin.index("/home/a/.local/share/fonts") < lin.index("/usr/share/fonts")
     for d in (mac, lin):
-        assert len(d) == len(set(d)) and not any("Windows" in x for x in d)
+        assert len(d) == len(set(d)) and not any("Windows" in x or "\\" in x for x in d)
+        assert all(x.startswith("/") for x in d)
+
+
+@pytest.mark.parametrize("host", ["posix", "nt"])
+def test_simulated_os_paths_do_not_depend_on_the_host(monkeypatch, host):
+    """Regression for the Windows CI failure: compute macOS/Linux/Windows lists while the host's
+    os.path is posixpath or ntpath (simulated host); the result must be identical."""
+    import ntpath
+    import posixpath
+    # only PATT-PDF's view of the host changes (pytest itself keeps the real os module)
+    import types
+    fake_os = types.SimpleNamespace(**{k: getattr(os, k) for k in dir(os) if not k.startswith("__")})
+    fake_os.path, fake_os.name = (ntpath if host == "nt" else posixpath), host
+    monkeypatch.setattr(osenv, "os", fake_os)
+    monkeypatch.setattr(osenv, "_host_os", lambda: "windows" if host == "nt" else "linux")
+    win_env = {"PATT_PDF_FONT_SOURCE": "D:\\fonts;d:\\FONTS", "LOCALAPPDATA": "C:\\Users\\a\\AppData\\Local",
+               "WINDIR": "C:\\Windows"}
+    assert [str(p) for p in osenv.font_search_dirs(win_env, "windows", home="C:\\Users\\a")] == [
+        "D:\\fonts", "C:\\Users\\a\\AppData\\Local\\Microsoft\\Windows\\Fonts", "C:\\Windows\\Fonts"]
+    assert _posix(osenv.font_search_dirs({}, "macos", home="/Users/a"))[:2] == ["/Users/a/Library/Fonts", "/Library/Fonts"]
+    assert _posix(osenv.font_search_dirs({"XDG_DATA_HOME": "/x"}, "linux", home="/home/a"))[:2] == ["/x/fonts", "/home/a/.fonts"]
 
 
 def test_same_font_in_user_and_system_folder_user_wins(tmp_path, monkeypatch):

@@ -1,16 +1,38 @@
-# Status of v0.3.4.dev0 (2026-11-08): experimental, cross-platform test candidate
+# Status of v0.3.5.dev0 (2026-11-08): experimental, cross-platform test candidate
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.4.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.5.dev0` (a development pre-release, not a stable release).
 
-**The cross-platform stage is NOT complete.** Completion needs: this version re-tested from a fresh install on the user's macOS and Windows machines (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`), and a first real CI run with logs.
+**The cross-platform stage is NOT complete.** Completion needs: a green CI run of this version on all 10 jobs, and this version re-tested from a fresh install on the user's macOS and Windows machines (`docs/testing/MACOS_RETEST_PROMPT.md`, `docs/testing/WINDOWS_RETEST_PROMPT.md`).
 
-**Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends, on CPython 3.10.12 (Ubuntu) and on real python-build-standalone CPython 3.11.18 and 3.12.16 builds (§4).
+**Verified for this version:** only on Linux aarch64 (container), with synthetic PDFs and offline backends, on CPython 3.10.12 (Ubuntu) and on real python-build-standalone CPython 3.11.18 and 3.12.16 builds (§4). The Windows fixes are confirmed only by reproducing the CI conditions on Linux (simulation), not on Windows.
+**CI so far:** one run, of v0.3.4 (`ca38a93`, §0-CI). The fixed version has not run in CI.
 **Real-system evidence so far:**
 * v0.3.1 (`6b969b8`): full reviewer runs on macOS and Windows (§0b).
 * v0.3.2 (`30d7366`): an independent functional check on macOS arm64 / Python 3.12 (§0a).
 * v0.3.3 (`1897418`): an independent check on macOS arm64, Python 3.12.14 and 3.11.16 (§0). Not a fresh-install acceptance.
 
-**Not verified:** v0.3.4 on macOS or Windows; real-world PDFs; real DeepL calls; cp936/cp1252 Windows systems; Preview/Acrobat interaction; CI (written, never run).
+**Not verified:** v0.3.5 on macOS or Windows (real machines or CI); real-world PDFs; real DeepL calls; cp936/cp1252 Windows systems; Preview/Acrobat interaction; CI (written, never run).
+
+## 0-CI. First GitHub Actions run (v0.3.4, `ca38a93`, run 42396678823, 2026-11-07)
+
+Real hosted runners (not simulations). Linux: 3/3 jobs passed. macOS: 4/4 jobs passed. Windows: **3/3 jobs failed**, each with the same 5 tests; all other tests passed or skipped as designed. Logs were read through the signed-in GitHub web UI; they are not copied into the repository.
+
+| Job | Runner image, Python | Result |
+|---|---|---|
+| windows-2025 py3.12 ocr=true | Windows Server 2025 x64, CPython 3.12.10, Tesseract (choco) | 180 passed, 5 failed, 5 skipped |
+| windows-2025 py3.13 ocr=false | Windows Server 2025 x64, CPython 3.13.17 | 175 passed, 5 failed, 10 skipped |
+| windows-11-arm py3.12 ocr=false | Windows 11 ARM64, CPython 3.12.10, no `[ocr]` | 175 passed, 5 failed, 10 skipped |
+
+`doctor` on all three: `locale_encoding cp1252`, `filesystem_encoding utf-8`, `stdout_encoding cp1252`, `utf8_mode False`, `pth_strategy utf8-first` (frozen `site`). The "UTF-8 mode off" step was skipped because the previous step failed.
+
+| Failing tests | Root cause (from the logs, then reproduced) | Fix |
+|---|---|---|
+| `test_pipeline_with_platform_default_encoding`, `test_stdlib_encoding_warning_does_not_abort_probe`, `test_helper_covers_the_py311_api_even_on_older_python`, `test_real_third_party_encoding_warning_is_listed_not_failed` | **A real product defect in the CLI's console output, not a test artefact.** All four run the same encoding probe; it passed `table.pdf` and `toc.pdf`, then `plan` of `报告 2026 – résumé.pdf` exited 1 with `UnicodeEncodeError: 'charmap' codec can't encode characters in position 33-34`, i.e. while *printing* the result line (`planned … <file name>`); planning itself, file I/O and JSON were fine. Mechanism (CPython `initconfig.c`): on Windows the default stdout/stderr error handler is `surrogateescape`, not `strict`. `cli._safe_console()` only replaced `strict` with `backslashreplace`, so on a piped Windows console in a legacy code page (cp1252 here; cp936 etc. alike) any CJK/en-dash file name aborted the command. The existing regression test used `PYTHONIOENCODING=cp1252`, which means `cp1252:strict`, so it passed on Windows CI and never exercised the real default. The same would affect users who redirect output (`> log.txt`, pipes, schedulers) on a non-UTF-8 Windows system. | `_safe_console()` now also replaces `surrogateescape` (and leaves UTF streams alone). New tests: `test_pipeline_with_windows_like_piped_console` (probe with `cp1252:surrogateescape`), `test_legacy_console_encoding_does_not_abort[cp1252 / cp1252:surrogateescape / cp936:surrogateescape]`, `test_safe_console_replaces_strict_and_surrogateescape_but_not_utf8`. Before the fix: 3 of them fail with the exact CI error; after: pass. |
+| `test_macos_and_linux_orders_user_before_system` | **Path rules of the host leaked into a simulated OS.** `font_search_dirs(…, "macos")` joined with the host's `os.path` and wrapped in the host's `Path`: on Windows `'/Users/a\\Library\\Fonts'` → `\\Users\\a\\Library\\Fonts`, so the expected POSIX path was "not in list". Real users are not affected (each OS only computes its own list), but the simulation was wrong. The Windows-order test had the mirror-image problem on POSIX hosts (it compared using the host `Path`). | Simulated lists use the target OS's path module (`ntpath`/`posixpath`) and are returned as pure paths of that OS when it differs from the host; Windows de-duplication is case-insensitive on any host. New test `test_simulated_os_paths_do_not_depend_on_the_host[posix/nt]` computes all lists under both host path modules. Tesseract candidates keep the host `os.path` on purpose (they are checked on this file system). |
+
+The CI workflow now runs the "UTF-8 mode off" step even after a failed suite, and a test asserts that all six OS/CPU targets stay in the matrix. Nothing was removed or made optional.
+
+**Still to confirm on real Windows:** the fixed version (next CI run), a real cp936/cp1252 *interactive* console (`_WindowsConsoleIO` is always UTF-8, so the defect only applies to redirected output), and the user's own Windows machine.
 
 ## 0. Findings of the independent macOS check of `1897418` (v0.3.3.dev0), and what v0.3.4 changes
 
@@ -140,6 +162,18 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 4. Test results
 
+### v0.3.5.dev0, this environment (Linux aarch64 container)
+
+196 tests (6 new: 5 regression tests for the Windows CI findings + 1 workflow guard; plus 1 workflow test). pyflakes clean.
+
+| Run | Result | Skips |
+|---|---|---|
+| CPython 3.10.12, dev tree | 195 passed, 1 skipped | Windows native lock |
+| CPython 3.11.18, regular install, non-ASCII folder | 195 passed, 1 skipped | same |
+| CPython 3.12.16, regular install, non-ASCII folder | 195 passed, 1 skipped | same |
+
+**Windows simulation** (not Windows): Python with a UTF-8 file system encoding, the locale encoding switched to CP1252 after start-up, and `PYTHONIOENCODING=cp1252:surrogateescape` – the same three values `doctor` reported on the CI runners. The encoding probe failed exactly like CI before the fix (`FAIL: plan 报告…`, `UnicodeEncodeError: 'charmap' … position 33-34`) and passes after it (3.12.16). The font-path test was checked with both `ntpath` and `posixpath` as the host path module.
+
 ### v0.3.4.dev0, this environment (Linux aarch64 container)
 
 190 tests; pyflakes clean. Interpreters: Ubuntu CPython 3.10.12; python-build-standalone 20261026 CPython 3.11.18 and 3.12.16 (archives checked against the release SHA256SUMS; `site` frozen in both). numpy 2.2.6 and Pillow 12.3.0 wheels for 3.11/3.12 checked against PyPI SHA-256; PyMuPDF 1.28.2 and opencv-python-headless 5.0.0.93 are abi3 builds shared with 3.10; Tesseract 4.1.1 (eng). The source was copied to a folder named `源码 目录` (non-ASCII, space).
@@ -261,6 +295,7 @@ The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, 
 
 ## 7. Compatibility notes
 
+* v0.3.5: no engine change. CLI output on non-UTF-8 consoles now always escapes unencodable characters (previously only for the `strict` handler). `osenv.font_search_dirs(…, os_name=<other OS>)` returns pure paths of that OS.
 * v0.3.4: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`). `platform_info()`/`doctor` gained `pth_strategy`, `pth_locale_encoding`, `site_frozen`. A missing OpenCV during planning is a skipped page note (`page_not_processed`), not a planning error.
 * v0.3.3: no engine change (`ENGINE_VERSION` stays `patt-0.3-e3`); existing state directories stay valid. Error texts in state files now redact *all* absolute paths (`<path>/name`). `pyyaml` was added to the `dev` extra (CI-workflow check only).
 

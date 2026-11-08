@@ -136,35 +136,59 @@ def install_warnings(package_file: str | None = None, info: dict | None = None) 
 
 
 # ---------------------------------------------------------------- fonts
+def _host_os() -> str:
+    return {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+
+
+def _flavour(os_name: str):
+    """Path rules of the *target* OS (ntpath or posixpath), independent of the host: building
+    macOS paths with the host's os.path on Windows gave '/Users/a\\Library\\Fonts', and
+    Path() then turned it into '\\Users\\a\\Library\\Fonts' (Windows CI finding)."""
+    import ntpath
+    import posixpath
+    return ntpath if os_name == "windows" else posixpath
+
+
+def _as_path(p: str, os_name: str):
+    """A concrete Path for the running OS; a pure path of the target OS when simulating another."""
+    from pathlib import PurePosixPath, PureWindowsPath
+    if (os_name == "windows") == (_host_os() == "windows"):     # same path family as the host
+        return Path(p)
+    return PureWindowsPath(p) if os_name == "windows" else PurePosixPath(p)
+
+
 def font_search_dirs(env: dict | None = None, os_name: str | None = None, home: str | None = None) -> list[Path]:
     """Folders searched by `patt-pdf fonts`, most specific first, without duplicates:
 
-    1. $PATT_PDF_FONT_SOURCE (one or more folders, os.pathsep-separated): explicit choice;
+    1. $PATT_PDF_FONT_SOURCE (one or more folders, separated by ';' on Windows, ':' elsewhere);
     2. the user's own font folders (fonts installed "for me only");
     3. the system font folders.
-    Only folders of the running OS are listed. Parameters allow testing other OSes."""
+    Only folders of the running OS are listed. Parameters allow computing the list for another
+    OS; paths then follow THAT OS's rules (separators, case-insensitive de-duplication on
+    Windows) and are returned as pure paths, whatever the host is."""
     env = os.environ if env is None else env
-    os_name = os_name or {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+    os_name = os_name or _host_os()
+    fp = _flavour(os_name)
     home = home or os.path.expanduser("~")
     sep = ";" if os_name == "windows" else ":"
     dirs: list[str] = [x for x in env.get("PATT_PDF_FONT_SOURCE", "").split(sep) if x]
     if os_name == "windows":
-        la = env.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-        dirs += [os.path.join(la, "Microsoft", "Windows", "Fonts"),
-                 os.path.join(env.get("WINDIR") or env.get("SystemRoot") or r"C:\Windows", "Fonts")]
+        la = env.get("LOCALAPPDATA") or fp.join(home, "AppData", "Local")
+        dirs += [fp.join(la, "Microsoft", "Windows", "Fonts"),
+                 fp.join(env.get("WINDIR") or env.get("SystemRoot") or r"C:\Windows", "Fonts")]
     elif os_name == "macos":
-        dirs += [os.path.join(home, "Library", "Fonts"), "/Library/Fonts", "/opt/homebrew/share/fonts",
+        dirs += [fp.join(home, "Library", "Fonts"), "/Library/Fonts", "/opt/homebrew/share/fonts",
                  "/usr/local/share/fonts", "/System/Library/Fonts"]
     else:
-        xdg = env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-        dirs += [os.path.join(xdg, "fonts"), os.path.join(home, ".fonts"),
+        xdg = env.get("XDG_DATA_HOME") or fp.join(home, ".local", "share")
+        dirs += [fp.join(xdg, "fonts"), fp.join(home, ".fonts"),
                  "/usr/local/share/fonts", "/usr/share/fonts/opentype/noto", "/usr/share/fonts/noto-cjk",
                  "/usr/share/fonts/google-noto-cjk", "/usr/share/fonts/opentype", "/usr/share/fonts"]
     out, seen = [], set()
     for d in dirs:
-        key = os.path.normcase(os.path.normpath(d))
+        key = fp.normcase(fp.normpath(d))
         if key not in seen:
-            seen.add(key); out.append(Path(d))
+            seen.add(key); out.append(_as_path(fp.normpath(d), os_name))
     return out
 
 
@@ -177,7 +201,7 @@ def tesseract_candidates(env: dict | None = None, os_name: str | None = None) ->
     if env.get("PATT_PDF_TESSERACT"):
         c.append(("PATT_PDF_TESSERACT", env["PATT_PDF_TESSERACT"]))
     c.append(("PATH", "tesseract"))
-    if os_name == "windows":
+    if os_name == "windows":        # host os.path on purpose: candidates are checked on this file system
         for var, default in (("ProgramFiles", r"C:\Program Files"), ("LOCALAPPDATA", "")):
             base = env.get(var) or default
             if base:

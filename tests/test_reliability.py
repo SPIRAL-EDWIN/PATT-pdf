@@ -115,17 +115,48 @@ def test_font_search_is_configurable_and_errors_clearly(tmp_path, monkeypatch):
         fonts.face_path("sans", False)
 
 
+# PYTHONIOENCODING values: ":surrogateescape" is what CPython uses BY DEFAULT for stdout/stderr on
+# Windows (Python/initconfig.c, config_get_stdio_errors), so "cp1252:surrogateescape" reproduces a
+# piped Windows console exactly. v0.3.4 (ca38a93) tested only "cp1252" (= strict on POSIX) and
+# failed on all three Windows CI jobs with UnicodeEncodeError: 'charmap'.
 @NON_UTF8_FS
-def test_legacy_console_encoding_does_not_abort(corpus, tmp_path):
-    """A cp1252 console (common on Windows when output is piped) must not crash on CJK names."""
-    env = dict(os.environ, PYTHONIOENCODING="cp1252",
+@pytest.mark.parametrize("ioenc", ["cp1252", "cp1252:surrogateescape", "cp936:surrogateescape"])
+def test_legacy_console_encoding_does_not_abort(corpus, tmp_path, ioenc):
+    """A legacy code page console (common on Windows when output is piped) must not crash on CJK names."""
+    env = dict(os.environ, PYTHONIOENCODING=ioenc,
                PYTHONPATH=os.pathsep.join([str(p) for p in sys.path if p]))
-    r = subprocess.run([sys.executable, "-m", "patt_pdf.cli", "plan", str(corpus["src"]),
+    env.pop("PYTHONUTF8", None)
+    r = subprocess.run([sys.executable, "-X", "utf8=0", "-m", "patt_pdf.cli", "plan", str(corpus["src"]),
                         "--state", str(tmp_path / "s"), "--no-ocr", "--files", "报*"],
                        capture_output=True, env=env, timeout=120)
-    out = r.stdout.decode("cp1252") + r.stderr.decode("cp1252")
+    enc = ioenc.split(":")[0]
+    out = r.stdout.decode(enc, "replace") + r.stderr.decode(enc, "replace")
     assert r.returncode == 0, out
     assert "planned" in out and "UnicodeEncodeError" not in out
+    assert "sum" in out                                   # the file-name line itself was printed
+
+
+def test_safe_console_replaces_strict_and_surrogateescape_but_not_utf8():
+    import io
+    from patt_pdf import cli
+
+    def stream(enc, err):
+        return io.TextIOWrapper(io.BytesIO(), encoding=enc, errors=err)
+    cases = {("cp1252", "strict"): "backslashreplace", ("cp1252", "surrogateescape"): "backslashreplace",
+             ("cp936", "surrogateescape"): "backslashreplace", ("cp1252", "replace"): "replace",
+             ("utf-8", "surrogateescape"): "surrogateescape", ("utf-8", "strict"): "strict"}
+    old = sys.stdout, sys.stderr
+    try:
+        for (enc, err), want in cases.items():
+            sys.stdout, sys.stderr = stream(enc, err), stream(enc, err)
+            cli._safe_console()
+            got = (sys.stdout.errors, sys.stderr.errors)
+            if enc != "utf-8":
+                print("\u62a5\u544a 2026 \u2013 r\xe9sum\xe9.pdf", file=sys.stdout)   # must not raise
+            sys.stdout, sys.stderr = old
+            assert got == (want, want), (enc, err, got)
+    finally:
+        sys.stdout, sys.stderr = old
 
 
 def test_locked_target_gives_clear_error_and_no_temp_left(tmp_path, monkeypatch):

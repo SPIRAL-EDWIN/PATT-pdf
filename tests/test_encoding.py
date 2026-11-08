@@ -90,6 +90,16 @@ def test_pipeline_with_platform_default_encoding(fonts_ready):
     assert rc == 0 and "OK" in out, out[-3000:]
 
 
+def test_pipeline_with_windows_like_piped_console(fonts_ready):
+    """Reproduces the Windows CI failure of ca38a93 on any OS: a piped stdout on Windows defaults
+    to the ANSI code page with errors='surrogateescape' (CPython initconfig.c), which cannot
+    encode '报' or '–'. `plan` used to abort with UnicodeEncodeError: 'charmap' while printing
+    the file name (all three Windows jobs, 4 tests). The pipeline must finish and stay correct."""
+    rc, out = _run_probe({"PYTHONIOENCODING": "cp1252:surrogateescape"}, fonts_ready)
+    assert rc == 0 and "OK" in out, out[-3000:]
+    assert "UnicodeEncodeError" not in out
+
+
 def _legacy_locales():
     if os.name != "posix":
         return []

@@ -1,5 +1,7 @@
 # Offline test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual
-# backends only. Status: NOT RUN YET. No result may be claimed until a run log exists.
+# backends only. First run: ca38a93, run 42396678823 (2026-11-07): Linux 3/3 and macOS 4/4 jobs
+# passed; all 3 Windows jobs failed 5 tests (console encoding, host path rules in a font test).
+# Fixed afterwards; the fixed version has NOT run in CI yet.
 #
 # Dependency wheels per runner were checked on PyPI on 2026-11-07 (see the windows-11-arm entry).
 # Runner labels were checked on 2026-11-07 against github.com/actions/runner-images (README
@@ -138,6 +140,7 @@ jobs:
       - name: Tests
         run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit.xml
       - name: Encoding tests with UTF-8 mode off
+        if: ${{ !cancelled() }}        # still run (and report) when the full suite failed
         env:
           PYTHONUTF8: "0"
         run: python -m pytest -q -p no:cacheprovider -rA tests/test_encoding.py

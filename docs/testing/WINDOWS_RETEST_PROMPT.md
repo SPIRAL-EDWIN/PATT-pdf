@@ -1,4 +1,4 @@
-# 给 Windows 上 Codex 的完整复测提示词：PATT-PDF v0.3.4.dev0
+# 给 Windows 上 Codex 的完整复测提示词：PATT-PDF v0.3.5.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -11,7 +11,14 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.4.dev0，实验性开发版，不是稳定版。本版只在 Linux 上测试过；**从未在 Windows 上运行过**。
+- **版本：**v0.3.5.dev0，实验性开发版，不是稳定版。本版只在 Linux 上测试过；**从未在 Windows 上运行过**（CI 和实机都没有）。
+- **三类证据，报告中必须分开写，不能互相替代：**
+  1. **GitHub 云端 CI**：在 GitHub 提供的 Windows 云端机器上运行，不是用户的电脑。v0.3.4（`ca38a93`，run 42396678823）的结果是：Windows Server 2025 x64（3.12、3.13）和 Windows 11 ARM64（3.12），系统代码页 cp1252，3 个任务各有 5 项失败，其余通过或按设计跳过；v0.3.5 的修复**尚未在 CI 运行**。
+  2. **本次在用户 Windows 电脑上的实测**：只有你亲手运行、有日志的项目才算。
+  3. **模拟和跳过**：Linux/macOS 上的模拟、pytest 中的模拟测试、SKIP 项，都不等于 Windows 实测。
+- **CI 发现的两个问题（v0.3.5 已修复，需要你在实机上确认）：**
+  - **C1 控制台编码：**输出被重定向（管道、`> 文件`、`*>`、`Tee-Object`）且系统代码页不是 UTF-8 时，Windows 上 Python 的 stdout 默认错误处理是 `surrogateescape`。v0.3.4 在打印 `报告 2026 – résumé.pdf` 这类文件名时会以 `UnicodeEncodeError: 'charmap'` 退出。直接在控制台窗口里显示时不受影响（控制台 I/O 总是 UTF-8）。
+  - **C2 字体路径测试：**在 Windows 上模拟 macOS/Linux 字体目录时，用了 Windows 的路径规则，只是测试问题，不影响真实使用。
 - **上一轮 Windows 实测（v0.3.1，`6b969b8`）发现的问题。**这些在 v0.3.2/v0.3.3 中已有对应修改，但都**未经 Windows 实机验证**：
   - W01：编码探针失败；
   - W02：错误 JSON 和报告中出现了 Windows 绝对路径；
@@ -107,7 +114,7 @@ Get-Command tesseract -ErrorAction SilentlyContinue | Select-Object -ExpandPrope
 python -m pip install --upgrade pip
 $extras = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "dev" } else { "ocr,dev" }   # opencv 没有 win_arm64 wheel
 Run install pip install "$T\PATT-pdf[$extras]"
-patt-pdf --version                                                   # 预期：patt-pdf 0.3.4.dev0
+patt-pdf --version                                                   # 预期：patt-pdf 0.3.5.dev0
 python -c "import pymupdf,numpy,fontTools,cv2,platform;print(pymupdf.VersionBind,numpy.__version__,fontTools.version,cv2.__version__,platform.machine())"
 ```
 - **ARM64 Windows：**截至 2026-11-07，PyPI 上 PyMuPDF、numpy、Pillow、PyYAML 都有 `win_arm64` wheel，但 **opencv-python-headless 没有**。因此 ARM64 上不安装 `[ocr]`，OCR 相关项全部标为 SKIP（原因：不支持）。若其他依赖安装失败，记录 FAIL 和 pip 的报错，不要从源码编译。
@@ -160,9 +167,11 @@ $env:PATT_PDF_TESSERACT = $keep
   - POSIX locale 模拟：`test_pipeline_in_legacy_posix_locales`、`test_pth_decoding_matches_the_interpreters_own_rule`；
   - POSIX 替换语义：`test_posix_open_reader_does_not_block_replace`。
 - 无 OCR 时另外跳过 5 项。
-- **应当运行：**`test_native_windows_lock`、`test_pipeline_with_platform_default_encoding`、`test_unicode_filename_roundtrip`、`tests/test_ci_workflow.py`。它们若被跳过，要作为发现报告。
+- **应当运行：**`test_native_windows_lock`、`test_pipeline_with_platform_default_encoding`、`test_pipeline_with_windows_like_piped_console`、`test_legacy_console_encoding_does_not_abort`（3 组参数）、`test_simulated_os_paths_do_not_depend_on_the_host`、`test_macos_and_linux_orders_user_before_system`、`test_unicode_filename_roundtrip`、`tests/test_ci_workflow.py`。它们若被跳过，要作为发现报告。
+- **对照 CI：**v0.3.4 在 CI 上失败的 5 项（`test_pipeline_with_platform_default_encoding`、`test_stdlib_encoding_warning_does_not_abort_probe`、`test_helper_covers_the_py311_api_even_on_older_python`、`test_real_third_party_encoding_warning_is_listed_not_failed`、`test_macos_and_linux_orders_user_before_system`），在报告中逐项写明本机结果。
+- `pytest` 由 `Run` 执行，输出被重定向到文件，所以本身就是“重定向输出”的场景；系统代码页为 UTF-8 时，它不会触发 C1。
 
-## 5. 专项复测 E1–E8
+## 5. 专项复测 E1–E9
 
 每项都记录：命令、退出码、关键输出、预期、实际，以及 PASS / FAIL / SKIP。
 
@@ -173,6 +182,20 @@ $env:PYTHONUTF8 = "0"; Run e1 python -m pytest -q -p no:cacheprovider -rA tests\
 ```
 - 预期：全部 PASS。
 - 第一行若为 `cp65001`/`utf-8`，就写明“本机系统代码页为 UTF-8，**未验证** cp936/cp1252”。这一结论只能来自真实的非 UTF-8 机器，不能靠修改设置制造。
+
+**E1b 重定向输出时的控制台编码（CI 发现 C1）：**不改系统设置，只对当前进程设置 `PYTHONIOENCODING`，模拟“非 UTF-8 代码页 + 重定向”。这与 CI 上的真实情况一致，但仍属于在你机器上的**模拟**，报告中要这样写。
+```powershell
+$d = "$T\enc 输入"; python testsixtures\make_fixtures.py $d | Out-Null
+foreach ($e in "cp1252:surrogateescape","cp936:surrogateescape") {
+  $env:PYTHONIOENCODING = $e
+  Run "e1b-$($e.Split(':')[0])" patt-pdf plan $d --state "$T\enc-state-$($e.Split(':')[0])" --no-ocr --files "报*"   # 预期 exit=0
+  Remove-Item Env:PYTHONIOENCODING
+}
+Select-String -Path "$T\logs\e1b-*.txt" -Pattern "UnicodeEncodeError"                 # 预期：没有输出
+Run e1b-pytest python -m pytest -q -p no:cacheprovider -rA tests\test_reliability.py tests\test_encoding.py -k "console or windows_like"
+```
+- 预期：两个 `e1b-cp*` 都是 exit=0，日志中有 `planned`，没有 `UnicodeEncodeError`；`e1b-pytest` 全部 PASS。
+- 系统代码页确实是 cp936/cp1252 时，再不设 `PYTHONIOENCODING`，直接运行一次 `Run e1b-native patt-pdf plan …`（命令同上），这一项才算真实非 UTF-8 系统的证据。
 
 **E2 无 OCR 时批处理继续执行（W03）：**
 ```powershell
@@ -284,6 +307,7 @@ $pth = (Get-Item "$T\venv-edit\Lib\site-packages\__editable__*.pth").FullName
 
 ```
 候选 commit：<完整 SHA>    来源：A GitHub / B bundle（SHA-256 <…>）
+证据类别：本报告只含本机实测；CI 结果（如引用）单独注明 run 链接
 Windows <版本/版本号>  Arch <x64|ARM64>  PowerShell <…>  ACP/OEMCP <…>  chcp <…>  LongPathsEnabled <0|1|未设>
 Python <x.y.z>  pip <…>  setuptools <…>  PyMuPDF <…> numpy <…> fontTools <…> opencv <…> pytest <…> PyYAML <…>
 字体来源与 blob 校验：<…>   Tesseract：<版本 + eng / 无；来源与位置（脱敏）>
@@ -292,6 +316,7 @@ doctor 输出（脱敏）：<…>
 pytest 有OCR：n passed / n failed / n skipped（逐条列出跳过原因）
 pytest 无OCR：…
 E1 编码 ................ PASS/FAIL；默认编码=<…>；cp936/cp1252：未验证/已验证（何种机器）
+E1b 重定向输出编码 ..... cp1252/cp936 模拟：PASS/FAIL；真实非 UTF-8 系统：PASS/FAIL/SKIP
 E2 无OCR批处理 ......... PASS/FAIL  C1 rc=<…>  KeyError 次数=<…>  状态表偏差：<…>
 E3 有OCR ............... PASS/FAIL/SKIP
 E4 原生文件锁 .......... PASS/FAIL（rc、提示、哈希、.tmp 残留）；查看器实测：PASS/FAIL/SKIP

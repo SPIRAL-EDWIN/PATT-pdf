@@ -1,4 +1,4 @@
-# 给 macOS 上 Codex 的完整复测提示词：PATT-PDF v0.3.4.dev0
+# 给 macOS 上 Codex 的完整复测提示词：PATT-PDF v0.3.5.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -11,7 +11,14 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置；有 QA 状态和退出码。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.4.dev0，实验性开发版，不是稳定版。本版只在 Linux aarch64 上测试过，用过真实的 CPython 3.10.12，以及 python-build-standalone 的 CPython 3.11.18、3.12.16（普通安装和可编辑安装都测过，结果见 `docs/STATUS.md`）。**从未在 macOS 上运行过。**
+- **版本：**v0.3.5.dev0，实验性开发版，不是稳定版。本版只在 Linux aarch64 上测试过，用过真实的 CPython 3.10.12，以及 python-build-standalone 的 CPython 3.11.18、3.12.16（普通安装和可编辑安装都测过，结果见 `docs/STATUS.md`）。**本版从未在 macOS 上运行过。**
+- **三类证据，报告中必须分开写，不能互相替代：**
+  1. **GitHub 云端 CI**：在 GitHub 提供的 macOS 云端机器上运行，不是用户的 Mac。上一版 v0.3.4（`ca38a93`，run 42396678823）在 macos-15（arm64，3.11 和 3.12）和 macos-15-intel（x64，3.11）上的 4 个任务**全部通过**；v0.3.5 **尚未在 CI 运行**。
+  2. **本次在用户 Mac 上的实测**：只有你亲手运行、有日志的项目才算。CI 通过不能代替它：CI 机器的 Python 构建、区域设置、字体来源（Homebrew cask）都可能与用户的 Mac 不同。
+  3. **模拟和跳过**：pytest 中的模拟测试（例如在 macOS 上模拟 Windows 路径或控制台编码）以及 SKIP 项，都不等于实测。
+- **v0.3.5 相对 v0.3.4 的改动**（来自 Windows CI，macOS 上应无行为变化，但需要回归确认）：
+  - 控制台输出在非 UTF-8 编码下一律转义无法编码的字符；之前只处理 `strict`，没有处理 `surrogateescape`；
+  - 模拟其他系统的字体目录时，按目标系统的路径规则生成。
 - **历次在 macOS 上发现的问题（需要你复测）：**
   - v0.3.1：缺少 OCR 时出现 `KeyError`；编码探针失败；Python 3.11 + ISO8859-1 + 中文路径的可编辑安装无法导入。
   - v0.3.2：两个测试失败，原因是测试本身的假设错误。
@@ -59,7 +66,7 @@ git -C "$T/PATT-pdf" status --short          # 必须为空
 
 **B. 离线 bundle（尚未推送时使用；用户通过 U 盘、私人网盘等可信途径提供文件、SHA-256 和完整 commit）：**
 ```bash
-B=/path/to/patt-pdf-0.3.4.dev0-<短SHA>.bundle
+B=/path/to/patt-pdf-0.3.5.dev0-<短SHA>.bundle
 shasum -a 256 "$B"                           # 必须与用户给的 SHA-256 一致
 git bundle list-heads "$B"                   # HEAD 与 refs/heads/main 都必须等于用户给的 commit
 git clone "$B" "$T/PATT-pdf"
@@ -87,7 +94,7 @@ PY=python3.12; V=312            # 第二遍改为 python3.11 / 311
 "$PY" -m venv "$T/venv$V" && . "$T/venv$V/bin/activate"
 python -m pip install --upgrade pip
 run install-$V pip install "$T/PATT-pdf[ocr,dev]"         # 普通（非 editable）安装
-run version-$V patt-pdf --version                          # 预期：patt-pdf 0.3.4.dev0
+run version-$V patt-pdf --version                          # 预期：patt-pdf 0.3.5.dev0
 python -c "import sys,pymupdf,numpy,fontTools,cv2;print(sys.version.split()[0],pymupdf.VersionBind,numpy.__version__,fontTools.version,cv2.__version__)"
 pip list 2>/dev/null | grep -i -E "^(setuptools|pyyaml|pytest) "
 ```
@@ -252,6 +259,16 @@ grep -o "Failed to open file '[^']*'" "$T/report-$V.md" | head -2               
 run m7-unit-$V python -m pytest -q -p no:cacheprovider tests/test_osenv.py -k "redact or custom_mount"
 ```
 
+**M7b：重定向输出的控制台编码与平台模拟测试（v0.3.5 回归）**
+```bash
+for e in latin-1:surrogateescape cp1252:surrogateescape; do
+  PYTHONIOENCODING=$e run m7b-${e%%:*}-$V patt-pdf plan "$IN" --state "$T/enc-$V-${e%%:*}" --no-ocr --files "报*"    # 预期 exit=0
+done
+grep -l UnicodeEncodeError "$T"/logs/m7b-*-$V.txt                                   # 预期：没有输出
+run m7b-tests-$V python -m pytest -q -p no:cacheprovider -rA tests/test_reliability.py tests/test_encoding.py tests/test_osenv.py -k "console or windows_like or simulated_os or orders_user"
+```
+- 预期：全部 exit=0，`m7b-tests` 全部 PASS。这是在 Mac 上**模拟**非 UTF-8 输出，报告中要这样写。
+
 **M8：中文路径、视觉效果与链接**
 ```bash
 run m8-cmp-$V patt-pdf compare "$IN" --state "$S" --out "$T/cmp$V" --files "t*"
@@ -276,6 +293,7 @@ python -c "import pymupdf,sys; o=pymupdf.open(sys.argv[1]); print([sorted(l['uri
 
 ```
 候选 commit：<完整 SHA>    来源：A GitHub / B bundle（SHA-256 <…>）
+证据类别：本报告只含本机实测；CI 结果（如引用）单独注明 run 链接
 macOS <版本>（<arm64|x86_64>，<芯片>）  Git <…>  执行 shell：bash <版本>（登录 shell <…>）
 Python 3.11：<x.y.z / 无>   Python 3.12：<x.y.z / 无>   setuptools <…>  pip <…>
 PyMuPDF <…> numpy <…> fontTools <…> opencv <…> pytest <…> PyYAML <…>
@@ -292,6 +310,7 @@ M4 无OCR批处理 ......... PASS/FAIL  c1 exit=<…>  KeyError=<…>  状态表
 M5 有OCR .............. PASS/FAIL/SKIP
 M6 Preview 打开时替换 .. PASS/FAIL/SKIP（实际行为：…）
 M7 路径脱敏 ............ PASS/FAIL
+M7b 输出编码（模拟） .... PASS/FAIL
 M8 视觉/链接 ........... PASS/FAIL（截图位置：私有）
 _exitcodes.txt：<粘贴>
 

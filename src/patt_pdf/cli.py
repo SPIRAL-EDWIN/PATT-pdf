@@ -327,15 +327,29 @@ def build_parser():
     return ap
 
 
+_LOSSLESS = ("utf8", "utf_8", "utf8sig", "utf_8_sig", "utf16", "utf_16", "utf32", "utf_32", "gb18030")
+
+
 def _safe_console():
     """Windows consoles/pipes often use a legacy code page (cp1252, cp936). Printing a
-    file name like '报告 – résumé.pdf' must never abort a batch, so unencodable characters
-    are escaped instead of raising UnicodeEncodeError."""
+    file name like '报告 – résumé.pdf' must never abort a batch, so characters the stream
+    cannot encode are escaped (backslashreplace) instead of raising UnicodeEncodeError.
+
+    The error handler is replaced whenever it cannot represent arbitrary text: 'strict' (POSIX
+    legacy locales) and also 'surrogateescape', which is CPython's DEFAULT for stdout/stderr on
+    Windows (and for the C/POSIX locale): surrogateescape only round-trips undecodable bytes and
+    raises for real characters such as '报' in cp1252. That was the Windows CI failure of
+    ca38a93 (`plan` aborted with UnicodeEncodeError: 'charmap' ...). Streams with a UTF
+    encoding are left alone."""
+    import codecs
     for s in (sys.stdout, sys.stderr):
         try:
-            if (s.errors or "strict") == "strict":
+            enc = codecs.lookup(s.encoding or "ascii").name.replace("-", "_")
+            if enc.replace("_", "") in {e.replace("_", "") for e in _LOSSLESS}:
+                continue
+            if (s.errors or "strict") in ("strict", "surrogateescape"):
                 s.reconfigure(errors="backslashreplace")
-        except (AttributeError, ValueError):
+        except (AttributeError, ValueError, LookupError):
             pass
 
 

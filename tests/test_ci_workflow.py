@@ -54,3 +54,16 @@ def test_shells_are_explicit(wf):
         elif run:
             assert "$env:" not in run and "Out-File" not in run, s.get("name")  # PowerShell syntax in bash
     assert "|| true" not in WF.read_text(encoding="utf-8")
+
+
+def test_all_existing_platform_targets_are_kept(wf):
+    """The Windows failures of run 42396678823 must be fixed, not hidden: every OS/CPU target of
+    that run stays in the matrix (Windows x64 and arm64 included)."""
+    oses = {e["os"] for e in wf["jobs"]["test"]["strategy"]["matrix"]["include"]}
+    assert {"ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel", "windows-2025", "windows-11-arm"} <= oses
+    assert "continue-on-error" not in WF.read_text(encoding="utf-8")
+
+
+def test_utf8_off_encoding_step_runs_after_a_failed_suite(wf):
+    steps = {s.get("name"): s for s in wf["jobs"]["test"]["steps"]}
+    assert "cancelled()" in str(steps["Encoding tests with UTF-8 mode off"].get("if", ""))
