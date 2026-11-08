@@ -18,7 +18,7 @@
 
 </div>
 
-> **实验性项目 · v0.3.7.dev0。** 当前是命令行原型，还不是完整的桌面应用。现阶段优先完善 macOS 和 Linux。本版本仅在 Linux 上使用合成 PDF 离线测试，尚未在 CI 和 Mac 上运行；Windows 实机测试暂缓。尚未验证真实 PDF，也未进行真实 DeepL 请求。输出可能不完整或有误，请务必人工复核。详见[平台验证状态](docs/STATUS.md)。
+> **实验性项目 · v0.3.8.dev0。** 当前是命令行原型，还不是完整的桌面应用。本版本仅在 Linux 上使用合成 PDF 离线测试，尚未在 CI 和 Mac 上运行。macOS 和 Linux 由本项目维护；Windows 由一位 Windows 协作者单独开发和测试，本版本**未在 Windows 上验证**。尚未验证真实 PDF，也未进行真实 DeepL 请求。输出可能不完整或有误，请务必人工复核。详见[平台验证状态](docs/STATUS.md)。
 
 ## 效果预览
 
@@ -65,6 +65,8 @@ patt-pdf doctor
 
 <details>
 <summary><b>Windows</b></summary>
+
+> Windows 由一位 Windows 协作者开发和测试；本版本**未在 Windows 上验证**。以下步骤仅供参考。
 
 从 [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases) 下载静态 SC OTF 字体并为当前用户安装，或放入文件夹后设置 `PATT_PDF_FONT_SOURCE`。需要 OCR 时安装带英文数据的 [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki)。在 PowerShell 中运行：
 

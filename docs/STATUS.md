@@ -1,15 +1,35 @@
-# Status of v0.3.7.dev0 (2026-11-08): experimental, cross-platform test candidate
+# Status of v0.3.8.dev0 (2026-11-08): experimental test candidate (macOS/Linux scope)
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.7.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.8.dev0` (a development pre-release, not a stable release).
 
-**Current priority (user decision, 2026-11-08):** macOS and Linux first. Windows code, tests and CI jobs stay, and their CI failures are fixed, but no new Windows *machine* retest is planned until the gate in §0-W is met.
+**Scope (user decision, 2026-11-08):** the maintainer's work (Claude) covers **macOS and Linux**. **Windows** development and native testing are done by a **Windows collaborator**. Windows support is not dropped: Windows code paths, Windows-specific tests, the Windows retest prompt and the Windows-only CI steps stay in the repository, but the default CI matrix no longer runs Windows jobs. **This version is not verified on Windows in any way.** Known Windows issues for the collaborator are listed in §0-WIN.
 
-**The cross-platform stage is NOT complete**, and completing it would not mean production readiness.
+**The stage is NOT complete**, and completing it would not mean production readiness.
 
-**Verified for this version:** only on Linux aarch64 (container): CPython 3.10.12 (Ubuntu), python-build-standalone 3.11.18 and 3.12.16; 240 passed / 2 skipped on each (§4). PowerShell 7.6.9 **on Linux** for the wrapper self-test. Not yet run in CI, not run on the user's Mac.
-**CI of the previous version v0.3.6 (`ae9c671`, run 42480633442):** 5 of 10 jobs passed (§0-L).
+**Verified for this version:** only on Linux aarch64 (container): CPython 3.10.12 (Ubuntu), python-build-standalone 3.11.18 and 3.12.16 (§4). Not yet run in CI; not run on the user's Mac.
+**CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
 
-**Not verified:** v0.3.7 on macOS (CI or the user's Mac); real-world PDFs (none in the repository; plan in `docs/testing/REAL_PDF_CORPUS.md`); real DeepL calls; Windows machines; a real cp936/cp1252 Windows system; Preview/Acrobat interaction beyond opening; Linux x64 outside CI.
+**Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs (none in the repository); real DeepL calls; Preview/Acrobat interaction beyond opening.
+
+## 0-WIN. Windows: status and handover notes for the Windows collaborator
+
+| Item | State |
+|---|---|
+| Last Windows CI | `c6c9ed5`, run 42487953018: windows-2025 py3.12 ocr=true, windows-2025 py3.13 ocr=false, windows-11-arm py3.12 ocr=false — all failed in **pytest collection**: `tests/test_process_interrupt.py` used `signal.SIGKILL` in a `parametrize` list; Windows' `signal` has no `SIGKILL`, so the module could not be imported (exit 2). No Windows test ran in that job; this says nothing about the PDF engine on Windows. |
+| Fix in v0.3.8 | parametrize by signal **name**, resolve inside the test (the test module is POSIX-only via `pytestmark`). A guard test collects the whole suite with POSIX-only signals removed from `signal` (simulated on Linux) and fails with the old code. Not run on Windows. |
+| Earlier Windows results | `07ed2df`: CI 10/10 incl. Windows; user's Windows 11 PC (v0.3.5): R01 (test tool), R02 (install in a deep folder) — see §0-R. `ae9c671`: wrapper self-test failed (fixed in v0.3.7, then passed in `c6c9ed5` CI). |
+| Open for the collaborator | full suite on Windows x64/arm64 after the collection fix; native file lock; real cp936/cp1252 systems; editable installs on legacy code pages; Windows ARM64 hardware; `docs/testing/WINDOWS_RETEST_PROMPT.md` (needs the current commit and version before use). |
+| To re-enable Windows CI | add the three former matrix entries (listed in the header comment of `.github/workflows/tests.yml`); the Windows-only steps are still in the workflow. |
+
+## 0-C. Public commits after v0.3.7 and their CI
+
+| Commit | Content | CI |
+|---|---|---|
+| `bea1a3b` | v0.3.7.dev0 candidate (Claude) | not run on its own |
+| `3530133` | Codex: preflight redaction also on early return and unreadable `.pth`; `install_check` hides pip arguments and pip output (credentials) and reports the real exit code; logo authorship/licence note (owner-confirmed original, AGPL-3.0-or-later, not affiliated with OpenCode) | run 42487629833 **cancelled** by the next push (concurrency); 3 Windows jobs had failed before cancellation; no conclusion for the rest |
+| `c6c9ed5` | README shows the light/dark logo | run 42487953018: Linux 4/4 (244 passed / 4 skipped with OCR; 239 / 9 without), macOS 3/3 (246 / 2 with OCR; 241 / 7 without), Windows 0/3 (collection error) |
+
+The private development tree was at `57f6433` (same tree as `bea1a3b`); both public commits were applied to it unchanged (`git am`), so the development tree now has the identical tree as `c6c9ed5` plus this version's changes.
 
 ## 0-L. v0.3.6 (`ae9c671`) CI run 42480633442, review findings, and what v0.3.7 changes
 
@@ -35,11 +55,13 @@ Skips seen: Windows lock (POSIX jobs), 5 OCR tests (no-OCR jobs), legacy-locale 
 | P0 (review): `preflight.py` printed `.pth` bytes as hex and absolute interpreter/site-packages paths; the macOS prompt asked for `xxd` output and "copy verbatim" | Hex of a path is the path. | Default output describes `.pth` lines by structure (bytes, UTF-8 validity, CJK chars, spaces, short salted hash) and replaces interpreter/site-packages/error paths; `--private-details` (opt-in, with a warning) shows raw data for local use. Tests check that plain, UTF-8/UTF-16 hex, escapes, URL-quoted and file-URL forms of a secret path and user name do not appear, and that ordinary URLs and error messages survive. `test_osenv` no longer prints the absolute `site.py` path. Prompts no longer ask for hex or raw paths. Redaction is best effort. | Fixed |
 | P1 (review): `install_check.py --pip-args` split on whitespace | Paths with spaces became several arguments. | New repeatable `--pip-arg=ARG` (one argv element each, no shell). Old `--pip-args` accepted only for plain flags; refused (exit 2, nothing created) when it contains quotes or path-like values. Fake-pip tests check the exact argv, Chinese/space wheelhouse paths and exit-code passthrough. | Fixed |
 
-## 0-W. Gate for the Windows machine stage (decision by the user)
+## 0-W. Readiness criteria for macOS/Linux (formerly: gate for the Windows stage)
+
+Windows is now handled by the collaborator in parallel (§0-WIN); these criteria describe when the macOS/Linux scope is done.
 
 | Criterion | State (2026-11-08) |
 |---|---|
-| CI of the candidate green on all 10 jobs, every skip explained | **Not yet**: v0.3.7 has not run in CI |
+| CI of the candidate green on all Linux/macOS jobs (7), every skip explained | **Not yet**: v0.3.8 has not run in CI (`c6c9ed5`: 7/7 Linux/macOS passed) |
 | macOS 3.11 and 3.12 fresh install from the candidate, with and without OCR, Chinese/space paths, preflight, offline workflow, interrupt/resume, Preview replacement | **Not yet** (prompt ready: `docs/testing/MACOS_RETEST_PROMPT.md`) |
 | Linux fresh install and offline workflow on a real machine (not only containers/CI) | **Partly**: container + CI only (prompt: `docs/testing/LINUX_RETEST_PROMPT.md`) |
 | OCR present/absent and font missing give clear statuses, never a silent `pass` | Covered by tests on Linux/CI; to be confirmed on the Mac |
@@ -48,7 +70,7 @@ Skips seen: Windows lock (POSIX jobs), 5 OCR tests (no-OCR jobs), legacy-locale 
 | At least a few licence-clear real PDFs with reviewed comparisons | **Not yet** (rules and validator only) |
 | Known gaps listed: Mac Intel (CI only), Linux x64 (CI only), legacy locales on macOS (user machine only) | Listed here |
 
-Meeting the gate means "ready for Windows machine tests", not "production ready".
+Meeting these criteria does not mean "production ready".
 
 ## 0-R. v0.3.5 (`07ed2df`) on CI and real machines, and what v0.3.6 changes
 
@@ -223,6 +245,18 @@ The v0.2 mutations M1–M5 (identity, staleness, unverified-as-pass, submission 
 
 ## 4. Test results
 
+### v0.3.8.dev0, this environment (Linux aarch64 container)
+
+249 tests (2 new: collection guard without POSIX-only signals; Linux/macOS matrix check; plus Codex's 6 redaction/credential tests from `3530133`). pyflakes clean. Run in four chunks per interpreter (sandbox time limit), with `PATT_TEST_WHEELHOUSE` pointing at a local setuptools 79.0.1 wheel so the real offline install test runs:
+
+| Interpreter | Result | Skips |
+|---|---|---|
+| CPython 3.10.12 (Ubuntu), dev tree | 247 passed, 2 skipped | Windows native lock; real-PDF corpus not present |
+| CPython 3.11.18, regular install in a Chinese/space folder | 247 passed, 2 skipped | same |
+| CPython 3.12.16, regular install in a Chinese/space folder | 247 passed, 2 skipped | same |
+
+`test_interrupted_render_leaves_consistent_state_and_resumes[SIGINT]` and `[SIGKILL]` both ran and passed on each interpreter (not skipped). The collection guard fails with the old `parametrize([signal.SIGINT, signal.SIGKILL])` and passes with the fix. Not run on Windows (out of scope) or macOS (no Mac here).
+
 ### v0.3.7.dev0, this environment (Linux aarch64 container)
 
 242 tests (30 new). pyflakes clean. Run in four chunks per interpreter (sandbox time limit); totals:
@@ -382,6 +416,7 @@ The jobs use Python 3.10–3.13, both with Tesseract and with verified absence, 
 
 ## 7. Compatibility notes
 
+* v0.3.8: no engine or CLI behaviour change. Default CI matrix: Linux and macOS only (Windows by the collaborator).
 * v0.3.7: no engine or CLI behaviour change. `tools/install_check.py`: `--pip-arg=ARG` (repeatable) replaces whitespace-split `--pip-args` for anything but plain flags; exit 3 when the target cannot build with `--no-build-isolation`. `tools/preflight.py`: no local paths by default (`--private-details` for local use). New `tools/corpus_check.py`.
 * v0.3.6: no engine or CLI behaviour change. New tools: `tools/preflight.py`, `tools/install_check.py`, `tools/run_logged.ps1` (+ self-test). The encoding probe exits 3 when the fixture generator fails.
 * v0.3.5: no engine change. CLI output on non-UTF-8 consoles now always escapes unencodable characters (previously only for the `strict` handler). `osenv.font_search_dirs(…, os_name=<other OS>)` returns pure paths of that OS.

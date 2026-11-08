@@ -104,8 +104,12 @@ def _state_is_consistent(b):
     return done
 
 
-@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGKILL], ids=["SIGINT", "SIGKILL"])
-def test_interrupted_render_leaves_consistent_state_and_resumes(batch, sig):
+# Signal NAMES, resolved inside the test: Windows' signal module has no SIGKILL, and
+# parametrize arguments are evaluated at collection time, so `signal.SIGKILL` here broke
+# collection of the whole suite on Windows (CI run 42487953018). On POSIX both still run.
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGKILL"])
+def test_interrupted_render_leaves_consistent_state_and_resumes(batch, signame):
+    sig = getattr(signal, signame)
     rc, out = _interrupt_after(batch, sig, n_started=3)
     assert rc != 0, out[-1500:]                                         # never reported as success
     if sig == signal.SIGINT:

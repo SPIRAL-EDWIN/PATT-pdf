@@ -18,7 +18,7 @@ Translate English PDFs into Simplified Chinese, with the translated text placed 
 
 </div>
 
-> **Experimental · v0.3.7.dev0.** This is a command-line prototype, not a finished desktop app. Current focus: macOS and Linux. This version has been tested offline on synthetic PDFs on Linux only; it has not yet run in CI or on a Mac, and Windows machine tests are on hold. Nothing has been verified on real-world PDFs or with a real DeepL request. Results can be incomplete or inaccurate: always review the output. See [platform status](docs/STATUS.md).
+> **Experimental · v0.3.8.dev0.** This is a command-line prototype, not a finished desktop app. This version has been tested offline on synthetic PDFs on Linux only; it has not yet run in CI or on a Mac. macOS and Linux are maintained here; Windows is developed and tested separately by a Windows collaborator, and this version is **not verified on Windows**. Nothing has been verified on real-world PDFs or with a real DeepL request. Results can be incomplete or inaccurate: always review the output. See [platform status](docs/STATUS.md).
 
 ## Preview
 
@@ -65,6 +65,8 @@ patt-pdf doctor
 
 <details>
 <summary><b>Windows</b></summary>
+
+> Windows is developed and tested by a Windows collaborator; this version has **not** been verified on Windows. The steps below are kept for reference.
 
 Install the static SC OTF fonts from [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases) for your user, or keep them in a folder and set `PATT_PDF_FONT_SOURCE`. For OCR, install the [Tesseract build](https://github.com/UB-Mannheim/tesseract/wiki) with English data. In PowerShell:
 

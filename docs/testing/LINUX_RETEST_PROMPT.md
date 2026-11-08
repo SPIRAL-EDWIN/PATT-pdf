@@ -1,4 +1,4 @@
-# 给 Linux 上 Codex 的完整复测提示词：PATT-PDF v0.3.7.dev0
+# 给 Linux 上 Codex 的完整复测提示词：PATT-PDF v0.3.8.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -10,8 +10,9 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置；有 QA 状态和退出码。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.7.dev0，实验性开发版。开发者只在一个 Linux aarch64 **容器**里测过（CPython 3.10.12、3.11.18、3.12.16，各 240 passed / 2 skipped）。GitHub CI 的 Linux 任务（ubuntu-24.04 x64、ubuntu-24.04-arm）上一版 v0.3.6 全部通过；v0.3.7 尚未在 CI 运行。**本次是第一次在真实 Linux 机器上从零安装。**
-- **当前优先级：**先完善 macOS 和 Linux；本次复测是进入 Windows 阶段门槛（`docs/STATUS.md` §0-W）的一部分。
+- **版本：**v0.3.8.dev0，实验性开发版。开发者只在一个 Linux aarch64 **容器**里测过（CPython 3.10.12、3.11.18、3.12.16）。上一个公开提交 `c6c9ed5` 的 CI（run 42487953018）中 Linux 4 个任务全部通过（ubuntu-24.04 3.10/3.12/3.13、ubuntu-24.04-arm 3.12）；那是 `c6c9ed5` 的结果，v0.3.8 尚未在 CI 运行。**本次是第一次在真实 Linux 机器上从零安装。**
+- **范围：**macOS 和 Linux 由本项目维护；Windows 由一位 Windows 协作者负责，不在本次范围内。
+- 本次复测对应 `docs/STATUS.md` §0-W 中“真实 Linux 机器”这一项。
 - **三类证据分开写：**GitHub CI、本机实测、模拟/跳过。
 - **禁止：**调用任何翻译 API（包括 DeepL usage 查询），读取或输出真实密钥；读取或上传用户的私人文档；`sudo`、修改系统 locale 或系统设置（安装系统软件包前先征得用户同意）；推送代码、创建 release 或 PyPI 包。
 - **工作范围：**只在新建的测试目录 `$T` 中工作，结束时只删除 `$T`。
@@ -38,7 +39,7 @@ git -C "$T/PATT-pdf" checkout <用户给的完整SHA>; git -C "$T/PATT-pdf" rev-
 ```
 **B. 离线 bundle（未推送时）：**
 ```bash
-B=/path/to/patt-pdf-0.3.7.dev0-<短SHA>.bundle
+B=/path/to/patt-pdf-0.3.8.dev0-<短SHA>.bundle
 sha256sum "$B"                                # 必须与用户给的 SHA-256 一致
 git bundle list-heads "$B"                    # HEAD 与 refs/heads/main 都必须等于用户给的 commit
 git clone "$B" "$T/PATT-pdf"; git -C "$T/PATT-pdf" rev-parse HEAD
@@ -65,7 +66,7 @@ PY=python3.12; V=312
 python -m pip install --upgrade pip
 run preflight-$V python -S "$T/PATT-pdf/tools/preflight.py"          # 预期 exit=1：patt_pdf 还未安装（只确认它能运行、输出不含路径）
 run install-$V python -m pip install "$T/PATT-pdf[ocr,dev]"
-run version-$V patt-pdf --version                                     # 预期：patt-pdf 0.3.7.dev0
+run version-$V patt-pdf --version                                     # 预期：patt-pdf 0.3.8.dev0
 run preflight2-$V python -S "$T/PATT-pdf/tools/preflight.py"         # 预期 exit=0，diagnosis: no problem found
 ```
 - `install` 失败时**原样记 FAIL**，再用辅助脚本重试一次（新目录，脚本不删除任何东西）：
@@ -122,7 +123,7 @@ cp "$T/table.bak" "$IN/table.pdf"
 **L4 真实中断与续跑：**
 ```bash
 run l4-pytest-$V python -m pytest -q -p no:cacheprovider -rA -s tests/test_process_interrupt.py tests/test_workflow_paths.py
-grep -E "^SIG" "$T/logs/l4-pytest-$V.txt"
+grep -E "SIG(INT|KILL)" "$T/logs/l4-pytest-$V.txt"                  # [SIGINT] 和 [SIGKILL] 都必须 PASSED，不得 SKIP
 ```
 然后在终端里亲手做一次：对新的状态目录执行 render，输出两三行后按 Ctrl+C，记录退出码；`ls -a <状态>/out | grep -c '^\.tmp-'` 预期 0；再执行一次 render 续跑并记录退出码与状态。
 

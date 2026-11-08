@@ -1,4 +1,4 @@
-# 给 macOS 上 Codex 的完整复测提示词：PATT-PDF v0.3.7.dev0
+# 给 macOS 上 Codex 的完整复测提示词：PATT-PDF v0.3.8.dev0
 
 > 本文件可整篇复制到一个新对话中直接使用，不依赖其他上下文。
 >
@@ -11,13 +11,14 @@
 ## 0. 背景与边界
 
 - **项目：**PATT-PDF。它把 PDF 中的英文替换为简体中文，并尽量放在原位置；有 QA 状态和退出码。所有平台共用一套核心代码，平台差异集中在 `src/patt_pdf/osenv.py`。
-- **版本：**v0.3.7.dev0，实验性开发版，不是稳定版。本版只在 Linux aarch64 上测试过（CPython 3.10.12、3.11.18、3.12.16，各 240 passed / 2 skipped）。**本版从未在 macOS 上运行过。**
-- **当前优先级：**先完善 macOS 和 Linux；Windows 实机测试暂缓。本次复测是进入 Windows 阶段门槛（`docs/STATUS.md` §0-W）的一部分。
+- **版本：**v0.3.8.dev0，实验性开发版，不是稳定版。本版只在 Linux aarch64 容器中测试过（CPython 3.10.12、3.11.18、3.12.16）。**本版从未在 macOS 上运行过。**
+- **范围：**macOS 和 Linux 由本项目维护；Windows 由一位 Windows 协作者负责，不在本次复测范围内。
 - **三类证据，报告中必须分开写，不能互相替代：**
-  1. **GitHub 云端 CI**：GitHub 的 macOS 云端机器，不是用户的 Mac。上一版 v0.3.6（`ae9c671`，run 42480633442）：macos-15 3.12（有 OCR）通过；macos-15 3.11（无 OCR）和 macos-15-intel 3.11（有 OCR）各有 1 项失败——离线安装测试中，python.org 3.11.9 的 venv 只有 setuptools 65.5、没有 `wheel`（`invalid command 'bdist_wheel'`），本版已修复。v0.3.7 **尚未在 CI 运行**。CI 机器没有非 UTF-8 locale。
+  1. **GitHub 云端 CI**：GitHub 的 macOS 云端机器，不是用户的 Mac。上一个公开提交 `c6c9ed5`（run 42487953018）的 macOS 3 个任务全部通过（macos-15 3.12 有 OCR：246 passed / 2 skipped；macos-15 3.11 无 OCR：241 / 7；macos-15-intel 3.11 有 OCR：246 / 2）。那是 `c6c9ed5` 的结果，**不是本版的**；v0.3.8 尚未在 CI 运行。CI 机器没有非 UTF-8 locale。
   2. **本次在用户 Mac 上的实测**：只有你亲手运行、有日志的项目才算。
   3. **模拟和跳过**：pytest 中的模拟测试和 SKIP 项都不等于实测。
-- **v0.3.7 需要你在 Mac 上确认的改动：**
+- **v0.3.8 相对 v0.3.7 的改动：**`c6c9ed5` 中的隐私修复（preflight 在解释器无法启动或 `.pth` 读不了时也不输出路径；`install_check` 不再输出 pip 参数和 pip 自身输出，只报告真实退出码），以及修复 `tests/test_process_interrupt.py` 在没有 `SIGKILL` 的平台上的收集错误（macOS 上两项中断测试照常运行）。
+- **v0.3.7 起需要你在 Mac 上确认的改动：**
   - `tools/preflight.py` 默认**不输出本机路径**（`.pth` 只报告长度、是否 UTF-8、中文字符数、空格数、短哈希）；
   - `tools/install_check.py` 新增 `--pip-arg=参数`（每个参数一个，含空格的路径保持完整），并在 `--no-build-isolation` 时先检查目标环境能否构建；
   - 新增真实进程中断测试（SIGINT/SIGKILL）和长中文路径全流程测试。
@@ -69,7 +70,7 @@ git -C "$T/PATT-pdf" status --short          # 必须为空
 
 **B. 离线 bundle（尚未推送时使用；用户通过 U 盘、私人网盘等可信途径提供文件、SHA-256 和完整 commit）：**
 ```bash
-B=/path/to/patt-pdf-0.3.7.dev0-<短SHA>.bundle
+B=/path/to/patt-pdf-0.3.8.dev0-<短SHA>.bundle
 shasum -a 256 "$B"                           # 必须与用户给的 SHA-256 一致
 git bundle list-heads "$B"                   # HEAD 与 refs/heads/main 都必须等于用户给的 commit
 git clone "$B" "$T/PATT-pdf"
@@ -97,7 +98,7 @@ PY=python3.12; V=312            # 第二遍改为 python3.11 / 311
 "$PY" -m venv "$T/venv$V" && . "$T/venv$V/bin/activate"
 python -m pip install --upgrade pip
 run install-$V pip install "$T/PATT-pdf[ocr,dev]"         # 普通（非 editable）安装
-run version-$V patt-pdf --version                          # 预期：patt-pdf 0.3.7.dev0
+run version-$V patt-pdf --version                          # 预期：patt-pdf 0.3.8.dev0
 python -c "import sys,pymupdf,numpy,fontTools,cv2;print(sys.version.split()[0],pymupdf.VersionBind,numpy.__version__,fontTools.version,cv2.__version__)"
 pip list 2>/dev/null | grep -i -E "^(setuptools|pyyaml|pytest) "
 ```
@@ -295,7 +296,7 @@ PYTHONIOENCODING=cp1252:surrogateescape run m7c-gen-$V python tests/fixtures/mak
 run m9-$V python -m pytest -q -p no:cacheprovider -rA -s tests/test_process_interrupt.py tests/test_workflow_paths.py
 grep -E "^SIG" "$T/logs/m9-$V.txt"
 ```
-- 预期：全部 PASS；`SIGINT`、`SIGKILL` 两行都显示 `before=<小于5> after=5 tmp-leftovers=0`。
+- 预期：全部 PASS（`[SIGINT]` 和 `[SIGKILL]` 两项都必须是 PASSED，不得是 SKIP）；`SIGINT`、`SIGKILL` 两行都显示 `before=<小于5> after=5 tmp-leftovers=0`。
 - 再在终端里亲手做一次（真实 Ctrl+C）：
   ```bash
   S9="$T/state-m9-$V"; patt-pdf plan "$IN" --state "$S9" --no-ocr >/dev/null; patt-pdf translate "$IN" --state "$S9" --backend manual --manual-tm "$TM" --max-chars 99999 >/dev/null

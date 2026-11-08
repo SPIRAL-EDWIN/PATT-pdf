@@ -1,18 +1,26 @@
 # Offline test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual
-# backends only. Runs so far: ca38a93 (run 42396678823): Linux 3/3, macOS 4/4, Windows 0/3;
-# 07ed2df (run 42459411475): 10/10; ae9c671 (run 42480633442): 5/10 - macOS 3.11 x2 (offline install
-# test: setuptools 65.5 without `wheel`), Windows x3 (wrapper self-test: child Python could not print
-# Chinese to a cp1252 log). Both fixed afterwards; the fixes have NOT run in CI yet.
+# backends only.
 #
-# Dependency wheels per runner were checked on PyPI on 2026-11-07 (see the windows-11-arm entry).
+# SCOPE (user decision, 2026-11-08): this default matrix covers Linux and macOS only. Windows
+# development and native testing are done by a Windows collaborator; the Windows matrix entries
+# were removed from THIS workflow (not from the project). The Windows-only steps below stay,
+# guarded by `runner.os == 'Windows'`, so a Windows job can be re-added by adding matrix entries
+# (former entries: windows-2025 py3.12 ocr=true, windows-2025 py3.13 ocr=false,
+# windows-11-arm py3.12 ocr=false extras=dev). Windows is NOT verified by this workflow.
+#
+# Runs so far: ca38a93 (42396678823) Linux 3/3, macOS 4/4, Windows 0/3; 07ed2df (42459411475)
+# 10/10; ae9c671 (42480633442) 5/10; c6c9ed5 (42487953018) Linux 4/4, macOS 3/3, Windows 0/3
+# (collection error: `signal.SIGKILL` used in a parametrize list; fixed afterwards, test is
+# collectable everywhere and still runs on POSIX). The Linux/macOS-only matrix has NOT run yet.
+#
+# Dependency wheels per runner were checked on PyPI on 2026-11-07.
 # Runner labels were checked on 2026-11-07 against github.com/actions/runner-images (README
 # "Available Images"): macOS 14 images were retired from GitHub Actions on 2026-11-02 (issue
 # #13518 / #15226), so macos-13/macos-14 are no longer used.
 #   ubuntu-24.04      x64    | ubuntu-24.04-arm   arm64
 #   macos-15          arm64  | macos-15-intel     x64 (Intel label, standard runner)
-#   windows-2025      x64    | windows-11-arm     arm64 (Windows 11 Arm64 image)
 # Hosted minutes for public repositories are free on standard runners; private repositories are
-# billed per minute (macOS and Windows at higher multipliers): check your plan before enabling.
+# billed per minute (macOS at a higher multiplier): check your plan before enabling.
 #
 # Actions (first-party, MIT), pinned to the commit of the release tag, checked 2026-11-07:
 #   actions/checkout        v7.0.1  3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -47,15 +55,9 @@ jobs:
           - {os: ubuntu-24.04-arm, python: "3.12", ocr: true}
           - {os: macos-15,         python: "3.12", ocr: true}
           - {os: macos-15-intel,   python: "3.11", ocr: true}
-          - {os: windows-2025,     python: "3.12", ocr: true}
           # without OCR: Tesseract must be verifiably absent (see "Verify OCR state")
           - {os: ubuntu-24.04,     python: "3.10", ocr: false}
           - {os: macos-15,         python: "3.11", ocr: false}
-          - {os: windows-2025,     python: "3.13", ocr: false}
-          # Windows arm64: PyMuPDF 1.28.2, numpy, Pillow, PyYAML publish win_arm64 wheels, but
-          # opencv-python-headless 5.0.0.93 does NOT (PyPI file list checked 2026-11-07), so this
-          # job installs without the [ocr] extra; OCR on Windows arm64 is unsupported for now.
-          - {os: windows-11-arm,   python: "3.12", ocr: false, extras: "dev"}
           # newest Python on Linux (.pth decoding changed in 3.13)
           - {os: ubuntu-24.04,     python: "3.13", ocr: true}
     env:
@@ -63,7 +65,7 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     defaults:
       run:
-        shell: bash                # same shell on all runners (Git Bash on Windows) unless stated
+        shell: bash                # same shell on all runners unless stated
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with:

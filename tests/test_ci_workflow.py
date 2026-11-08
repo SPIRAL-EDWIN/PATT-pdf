@@ -22,8 +22,8 @@ def wf():
 def test_no_retired_or_floating_runner_labels(wf):
     oses = {e["os"] for e in wf["jobs"]["test"]["strategy"]["matrix"]["include"]}
     assert not {"macos-13", "macos-14", "macos-latest", "ubuntu-latest", "windows-latest"} & oses
-    assert {"linux", "macos", "windows"} <= {o.split("-")[0].replace("ubuntu", "linux") for o in oses}
-    assert any("arm" in o or o == "macos-15" for o in oses) and any("intel" in o or o.startswith("windows-2") for o in oses)
+    assert {"linux", "macos"} <= {o.split("-")[0].replace("ubuntu", "linux") for o in oses}
+    assert any("arm" in o or o == "macos-15" for o in oses) and any("intel" in o for o in oses)
 
 
 def test_actions_are_pinned_to_commits(wf):
@@ -56,12 +56,23 @@ def test_shells_are_explicit(wf):
     assert "|| true" not in WF.read_text(encoding="utf-8")
 
 
-def test_all_existing_platform_targets_are_kept(wf):
-    """The Windows failures of run 42396678823 must be fixed, not hidden: every OS/CPU target of
-    that run stays in the matrix (Windows x64 and arm64 included)."""
-    oses = {e["os"] for e in wf["jobs"]["test"]["strategy"]["matrix"]["include"]}
-    assert {"ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel", "windows-2025", "windows-11-arm"} <= oses
-    assert "continue-on-error" not in WF.read_text(encoding="utf-8")
+def test_linux_and_macos_targets_are_kept_windows_is_out_of_this_matrix(wf):
+    """Scope decision (2026-11-08): the default matrix covers Linux and macOS (both CPU types each);
+    Windows is developed and tested by a Windows collaborator. Windows support is not removed from
+    the project: the Windows-only steps stay (guarded by runner.os) so entries can be re-added.
+    Nothing may be hidden with continue-on-error."""
+    inc = wf["jobs"]["test"]["strategy"]["matrix"]["include"]
+    oses = {e["os"] for e in inc}
+    assert {"ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel"} <= oses
+    assert not any(o.startswith("windows") for o in oses)
+    assert {"3.10", "3.11", "3.12", "3.13"} <= {e["python"] for e in inc}
+    for family in ("ubuntu", "macos"):                                # OCR on and off on both systems
+        assert {True, False} <= {e["ocr"] for e in inc if e["os"].startswith(family)}, family
+    for kept in ("Fonts (Windows", "Tesseract (Windows)", "PowerShell retest wrapper"):
+        step = next(s for s in wf["jobs"]["test"]["steps"] if s.get("name", "").startswith(kept))
+        assert "Windows" in step["if"], kept                          # inert here, ready for re-adding
+    text = WF.read_text(encoding="utf-8")
+    assert "continue-on-error" not in text and "NOT verified by this workflow" in text
 
 
 def test_utf8_off_encoding_step_runs_after_a_failed_suite(wf):
@@ -88,3 +99,26 @@ def test_offline_install_test_gets_a_wheelhouse_in_ci(wf):
     assert "setuptools>=70.1" in wh["run"] and "PATT_TEST_WHEELHOUSE" in wh["run"] and "--only-binary=:all:" in wh["run"]
     names = [s.get("name") for s in wf["jobs"]["test"]["steps"]]
     assert names.index(wh["name"]) < names.index("Tests")
+
+
+def test_suite_collects_without_posix_only_signals(tmp_path):
+    """CI run 42487953018: `signal.SIGKILL` in a parametrize list broke collection of the whole
+    suite on Windows (collection error, exit 2). Collect every test module in a child whose
+    signal module lacks the POSIX-only names; collection must succeed. (The POSIX interrupt
+    tests themselves keep running on Linux/macOS.)"""
+    import os
+    import subprocess
+    import sys
+    site = tmp_path / "site"; site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import signal\n"
+        "for n in ('SIGKILL', 'SIGHUP', 'SIGQUIT', 'SIGUSR1', 'SIGUSR2', 'SIGALRM', 'SIGCHLD', 'SIGPIPE'):\n"
+        "    if hasattr(signal, n):\n"
+        "        delattr(signal, n)\n", encoding="utf-8")
+    root = WF.parents[2]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(site), str(root / "src")] + [p for p in sys.path if p]))
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--collect-only",
+                        str(root / "tests")], capture_output=True, env=env, timeout=300, cwd=str(root))
+    out = (r.stdout + r.stderr).decode("utf-8", "replace")
+    assert r.returncode == 0 and "errors during collection" not in out and "error during collection" not in out, out[-2000:]
+    assert "test_interrupted_render_leaves_consistent_state_and_resumes[SIGKILL]" in out
