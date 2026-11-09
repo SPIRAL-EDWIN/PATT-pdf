@@ -13,7 +13,7 @@ PATT-PDF is a layout workflow built around an existing machine-translation servi
 | Page type | Handling | Evidence (v0.2) |
 |---|---|---|
 | Text layer (born-digital PDF) | Only the glyphs to be translated are removed; Chinese is drawn into the same box. Figures, `$`, `(61,451)`, `—`, page numbers, ratings (AAA, Baa2…) and URLs are kept as the original glyphs. | Synthetic TOC, balance sheet and ruled-table tests: kept figures are pixel-identical in the output |
-| Vector glyphs (text drawn as outlines, e.g. "Print to PDF") | OCR finds line boxes; covered outline paths are removed; Chinese is drawn. Figures read by OCR are flagged for review. | 1 synthetic fixture; needs the `[ocr]` extra and Tesseract |
+| Vector glyphs (text drawn as outlines, e.g. "Print to PDF") | OCR finds line boxes; covered outline paths are removed; Chinese is drawn. Figures read by OCR are flagged for review. | 1 synthetic fixture; needs Tesseract with English data |
 | Scanned pages | OCR, local background fill or inpaint, Chinese overlay. Textured backgrounds are refused and reported. | 1 synthetic fixture; experimental |
 | Text inside images | **Not translated.** Reported; the page cannot reach status `pass`. | — |
 | Underlines, strike-through lines, links on translated text | Whole-line decorations are redrawn under the Chinese text with the same colour, thickness and offset; link areas follow the text and link targets are preserved. When a line cannot be mapped or removed safely it is **left at its original length** and the page is marked `review` (a fallback, not a fix). Table borders and separators are not touched. | Synthetic fixtures only (PyMuPDF 1.28.2 and 1.25.2 on Linux); not tested on real PDFs. Details and gaps in `docs/STATUS.md` §3 |
@@ -25,11 +25,11 @@ Not supported: table structure detection (cells are handled line by line), verti
 
 ## Install
 
-PATT-PDF is one Python package with one engine for all systems; only the OS boundary (paths, file locks, font and Tesseract locations, console encoding) differs, in `src/patt_pdf/osenv.py`. There is no installer, no automatic download of fonts or Tesseract and no OS/CPU-specific build yet: `pip` picks the matching PyMuPDF/NumPy/OpenCV wheels for your OS and CPU, if they exist for your Python version.
+PATT-PDF is one Python package with one engine for all systems; only the OS boundary (paths, file locks, font and Tesseract locations, console encoding) differs, in `src/patt_pdf/osenv.py`. On macOS and Linux the one-line installer (`install.sh`, see the README) installs fonts and Tesseract through the system's package manager (Homebrew, `apt-get`, `dnf`, `pacman`, `zypper`) and the package into a private virtual environment; there is no Windows installer and no OS/CPU-specific build: `pip` picks the matching PyMuPDF/NumPy/OpenCV wheels for your OS and CPU, if they exist for your Python version. PATT-PDF itself never downloads fonts or Tesseract.
 
-Requirements: Python 3.10–3.13; Noto Sans CJK SC and Noto Serif CJK SC (Regular and Bold, SIL OFL 1.1); optionally Tesseract with English data (`eng`) for outlined and scanned pages.
+Requirements: Python 3.10–3.13; Noto Sans CJK SC and Noto Serif CJK SC (Regular and Bold, SIL OFL 1.1); Tesseract with English data (`eng`) for OCR.
 
-| | Fonts (official sources) | Tesseract (optional) |
+| | Fonts (official sources) | Tesseract (standard setup) |
 |---|---|---|
 | Debian/Ubuntu | `sudo apt install fonts-noto-cjk` | `sudo apt install tesseract-ocr tesseract-ocr-eng` |
 | macOS | `brew install --cask font-noto-sans-cjk font-noto-serif-cjk`, or the OTF files from [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk/releases) | `brew install tesseract` |
@@ -38,7 +38,7 @@ Requirements: Python 3.10–3.13; Noto Sans CJK SC and Noto Serif CJK SC (Regula
 ```bash
 cd PATT-pdf
 python3 -m venv .venv && . .venv/bin/activate      # Windows: py -3.12 -m venv .venv (no py launcher: python -m venv .venv); .venv\Scripts\Activate.ps1
-pip install ".[ocr]"                                 # drop [ocr] if you have no scanned/outlined pages
+pip install .                                        # includes OpenCV; install Tesseract separately
 patt-pdf fonts                                       # copies the SC faces into a per-user font directory
 patt-pdf doctor                                      # read-only: OS/CPU, encodings, fonts, Tesseract, warnings
 ```
@@ -160,9 +160,9 @@ PATT-PDF 是一套围绕现有机器翻译服务（DeepL）和两个离线后端
 
 **编码：**人工译文文件（`--manual-tm`）、术语表和密钥文件须为 UTF-8（允许 BOM，例如记事本保存的文件）；其他编码会给出明确错误，不会按系统代码页猜测。
 
-**跨平台：**Linux、macOS、Windows 共用同一套引擎，只有路径、文件锁、字体和 Tesseract 位置、控制台编码等系统差异集中在 `src/patt_pdf/osenv.py`，不维护三套核心。目前没有安装程序，也不会自动下载字体或 Tesseract；`pip` 会按系统和 CPU 选用合适的依赖 wheel（前提是该 Python 版本有对应 wheel）。
+**跨平台：**Linux、macOS、Windows 共用同一套引擎，只有路径、文件锁、字体和 Tesseract 位置、控制台编码等系统差异集中在 `src/patt_pdf/osenv.py`，不维护三套核心。macOS 和 Linux 可用一行命令安装脚本（`install.sh`，见 README）：它通过系统包管理器（Homebrew、`apt-get`、`dnf`、`pacman`、`zypper`）安装字体和 Tesseract，并把软件包装进独立的虚拟环境；没有 Windows 安装程序，也没有按系统/CPU 区分的构建，`pip` 会按系统和 CPU 选用合适的依赖 wheel（前提是该 Python 版本有对应 wheel）。PATT-PDF 本身不会下载字体或 Tesseract。
 
-- **安装与检查：**`pip install ".[ocr]"`，然后 `patt-pdf fonts`，再用 `patt-pdf doctor` 只读检查系统、编码、字体、Tesseract 和已知风险。
+- **安装与检查：**`pip install .`（包含 OpenCV），另行安装带英文数据的 Tesseract，然后 `patt-pdf fonts`，再用 `patt-pdf doctor` 只读检查系统、编码、字体、Tesseract 和已知风险。
 - **字体查找顺序：**`PATT_PDF_FONT_SOURCE` → 用户字体目录 → 系统字体目录，不重复。
 - **Tesseract：**`PATT_PDF_TESSERACT` → `PATH` → 系统默认安装目录。缺少 Tesseract 时，扫描页和转曲页为 `fail`（`page_not_processed`），其余文件继续处理。
 - **可编辑安装（`pip install -e`）：**较旧的 `site.py`（CPython 3.10、3.11、3.12.0–3.12.3）按区域编码读取 `.pth` 文件，3.12.4 起和 3.13 起改为先按 UTF-8 读取。使用较旧版本、源码目录含中文且区域编码不是 UTF-8 时，可能无法导入；在 3.11 及以上，`PYTHONUTF8=1` **无效**。Linux 上还有第二种情况：旧区域设置且未开 UTF-8 模式时，文件系统编码不是 UTF-8，即使 3.12.4+ 也找不到中文目录（这时 `PYTHONUTF8=1` 有效）。以上已在 Linux 上用真实的 CPython 3.10.12、3.11.18、3.12.16 测试，尚未在 macOS、Windows 上实测。请改用普通安装或纯英文目录。`patt-pdf doctor` 显示 `pth_strategy`（从当前 Python 实际运行的代码读取，`site` 被冻结时也有效），并只针对**当前**环境给出警告；可编辑安装已经无法导入时，doctor 本身也无法运行。这时请用同一个 Python 运行 `python -S tools/preflight.py`（只依赖标准库）：它分别报告解释器能否启动、`patt_pdf` 能否导入、每条含中文的 `.pth` 如何解码，以及恢复方法。v0.3.5 的 Mac 复测已确认：Python 3.11.16 在 en_US.ISO8859-1 / zh_CN.GBK 下，从中文目录做的可编辑安装无法导入；3.12.16 正常。

@@ -145,6 +145,25 @@ jobs:
           echo "doctor exit code: $rc (2 = warnings such as missing fonts; informational here)"
       - name: Lint
         run: python -m pyflakes src tests tools
+      - name: Lint install.sh (ShellCheck)
+        if: runner.os == 'Linux'
+        run: |
+          command -v shellcheck >/dev/null || sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck -s bash install.sh
+      # ---- one-line installer, run from this checkout with the job's Python, no system packages
+      # (fonts/Tesseract come from the steps above): exit 0 with OCR, 2 without (doctor: incomplete)
+      - name: One-line installer (install.sh --source .)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: |
+          rc=0
+          bash install.sh --source . --no-system --no-modify-path --python "$(command -v python)" \
+            --prefix "$RUNNER_TEMP/patt-pdf-home" --bin-dir "$RUNNER_TEMP/patt-pdf-bin" || rc=$?
+          expected=${{ matrix.ocr && '0' || '2' }}
+          echo "installer exit code: $rc (expected $expected)"
+          test "$rc" = "$expected"
+          "$RUNNER_TEMP/patt-pdf-bin/patt-pdf" --version
+          bash install.sh --uninstall --prefix "$RUNNER_TEMP/patt-pdf-home" --bin-dir "$RUNNER_TEMP/patt-pdf-bin"
+          test ! -e "$RUNNER_TEMP/patt-pdf-bin/patt-pdf"
       - name: Install preflight (standard library only, started with -S; must report a healthy env)
         run: python -S tools/preflight.py
       - name: PowerShell retest wrapper self-test (Windows)

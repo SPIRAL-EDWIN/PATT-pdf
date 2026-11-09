@@ -69,8 +69,32 @@ Windows is now handled by the collaborator in parallel (§0-WIN); these criteria
 | Privacy: no local paths in reports, diagnostics or retest feedback | Tests on Linux; best effort |
 | At least a few licence-clear real PDFs with reviewed comparisons | **Not yet** (rules and validator only) |
 | Known gaps listed: Mac Intel (CI only), Linux x64 (CI only), legacy locales on macOS (user machine only) | Listed here |
+| One-line installer (`install.sh`) completes a **full** install (fonts, Tesseract + eng, OpenCV) on macOS and Debian/Ubuntu | **Partly**: see §0-I |
 
 Meeting these criteria does not mean "production ready".
+
+## 0-I. One-line installer (`install.sh`, added 2026-11-09)
+
+**Decision (user, 2026-11-09):** one install, the complete one — no variant without OCR or fonts; macOS and Linux via one terminal command; no Homebrew tap, PyPI, apt or other package repository (nothing extra to maintain, sign or get accepted). The script lives in the repository and is fetched from the public `main` branch:
+
+`curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh | bash`
+
+What it does, in order (each step is printed first): system packages (macOS: Homebrew casks `font-noto-sans-cjk`, `font-noto-serif-cjk`, formula `tesseract`, and `python@3.12` only when no Python ≥ 3.10 is found; Linux: `apt-get`/`dnf`/`pacman`/`zypper` via `sudo`); a private venv in `~/.local/share/patt-pdf/venv` with the full package; a link `~/.local/bin/patt-pdf` and an offer to add that folder to `PATH`; `patt-pdf fonts`; `patt-pdf doctor` (the script's exit code is doctor's: 0 = complete, 2 = installed but incomplete). Options: `--ref`, `--source`, `--prefix`, `--bin-dir`, `--python`, `--pip-arg=`, `--no-system`, `--no-modify-path`, `--yes`, `--uninstall`.
+
+**Informed consent (user requirement):** on a Mac without Homebrew the script explains what Homebrew is for and asks before running the official Homebrew installer; `--yes` is the only way to skip the question. Both READMEs carry a "macOS: Homebrew" badge next to the status badges and describe this in the install section. Questions and the interactive Homebrew installer read from `/dev/tty`. Package commands use separate input so they cannot consume the piped script. Bash reads the entire `main()` definition before starting the install.
+
+**Safety:** `--source` builds from a clean copy of the package files (the checkout is never written to; stale `build/` cannot interfere — cf. R02). The installer refuses to replace a virtual environment or command it does not own, and restores its previous environment if package installation fails. `--uninstall` removes its own environment and matching command link. System packages, per-user font copies and shell start-up lines stay.
+
+| Check | State |
+|---|---|
+| shellcheck 0.10.0 clean (`-s bash`); `bash -n` | Yes (Linux container) |
+| Real run, Linux aarch64 container, CPython 3.11.18 and 3.12.16, offline wheelhouse, `--no-system`: venv, link, fonts 4/4, Tesseract + eng, OpenCV → exit 0; re-run replaces the venv; `--yes` adds the PATH line once (idempotent); `--uninstall` removes venv + link only; foreign prefix left alone; piped through stdin (`cat install.sh \| bash -s --`) | Yes |
+| No `sudo`/no package manager → warning, Python part continues, doctor reports Tesseract missing → exit 2 | Yes |
+| `tests/test_install_script.py` (static rules, help/argument errors create nothing, uninstall safety, real offline venv install from a staged copy) | Yes, including preservation of an existing command and rollback after a failed upgrade |
+| CI step "One-line installer" on every Linux/macOS job: `install.sh --source . --no-system` with the job's Python, expects exit 0 with OCR and 2 without, then `--uninstall` | Added; **not yet run** |
+| Apple Silicon Mac, system Bash 3.2 and Python 3.12.16: piped local install with `--no-system`, offline wheels, local Noto fonts and existing Tesseract | Doctor returned 0. The missing-dependencies case returned 2. Failed upgrade restored the previous CLI, and uninstall removed it. |
+| Fresh Homebrew setup, macOS Intel | **Not yet** |
+| Fedora (`dnf`), Arch (`pacman`), openSUSE (`zypper`) package names | From the distributions' package lists; **not run** |
 
 ## 0-R. v0.3.5 (`07ed2df`) on CI and real machines, and what v0.3.6 changes
 

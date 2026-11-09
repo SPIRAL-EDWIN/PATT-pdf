@@ -1,4 +1,4 @@
-"""OCR pages (vector glyphs and scans) via the Tesseract CLI (optional dependency).
+"""OCR pages (vector glyphs and scans) via the separately installed Tesseract CLI.
 
 Migrated verbatim from prototype layout module (_tesseract, _tesseract_multi, _recover_missed_words, _ocr_cells, render_rgb, plan_ocr_page); changes listed in docs/MIGRATION.md."""
 from __future__ import annotations
@@ -30,7 +30,7 @@ def ocr_dependency_problem() -> str | None:
         import importlib
         importlib.import_module("cv2")
     except ImportError as e:
-        return (f"OCR dependencies missing ({e.name or 'cv2'}): install patt-pdf[ocr] "
+        return (f"OCR dependencies missing ({e.name or 'cv2'}): reinstall patt-pdf (including opencv-python-headless) "
                 "(opencv-python-headless has no wheel for some platforms, e.g. Windows arm64)")
     return None
 
@@ -43,6 +43,21 @@ def tesseract_cmd() -> str:
     if not exe:
         raise OCRUnavailable(f"{how}: install Tesseract or set PATT_PDF_TESSERACT to the executable")
     return exe
+
+
+
+def tesseract_language_problem(exe: str) -> str | None:
+    """Check that the discovered Tesseract can load its English language data."""
+    try:
+        result = subprocess.run([exe, "--list-langs"], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"cannot check Tesseract languages ({type(e).__name__})"
+    if result.returncode != 0:
+        return "Tesseract could not list language data"
+    if "eng" not in result.stdout.splitlines():
+        return "Tesseract English language data (eng) not found"
+    return None
 
 
 def _tesseract(png_bytes, psm=3):

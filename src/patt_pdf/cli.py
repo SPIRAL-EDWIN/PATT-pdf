@@ -234,14 +234,21 @@ def cmd_doctor(a):
                 print(f"  {name:24s} {'source: ' + show(src) if src else 'no source found'}")
         print("  search order: " + " | ".join(show(d) for d in search_dirs()))
         print("  fix: install Noto Sans/Serif CJK SC (OFL 1.1) or set PATT_PDF_FONT_SOURCE, then `patt-pdf fonts`")
+    from .ocr import ocr_dependency_problem, tesseract_language_problem
     exe, how = find_tesseract()
     if exe:
         print(f"tesseract: {show(exe)} (via {how})")
+        problem = tesseract_language_problem(exe)
+        print(f"tesseract English data: {problem}" if problem else "tesseract English data: available")
+        if problem:
+            rc = EXIT_INCOMPLETE
     else:
         print(f"tesseract: not available ({how}); scanned and outlined pages will be FAIL/page_not_processed")
-    from .ocr import ocr_dependency_problem
+        rc = EXIT_INCOMPLETE
     cv = ocr_dependency_problem()                       # a real import: a broken cv2 counts as missing
     print("opencv: available" if cv is None else f"opencv: missing – {cv}")
+    if cv:
+        rc = EXIT_INCOMPLETE
     for w in install_warnings(info=info):
         print("warning: " + w); rc = max(rc, EXIT_INCOMPLETE)
     return rc

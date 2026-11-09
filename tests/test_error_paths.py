@@ -211,4 +211,4 @@ def test_opencv_missing_is_page_not_processed_not_a_page_error(corpus, tmp_path,
     assert st["status"] == "planned", st
     plan = json.loads(ws.plan_path("scanned.pdf").read_text(encoding="utf-8"))
     note = plan["pages"][0]["notes"][0]["skipped"]
-    assert "cv2" in note and "patt-pdf[ocr]" in note
+    assert "cv2" in note and "opencv-python-headless" in note
