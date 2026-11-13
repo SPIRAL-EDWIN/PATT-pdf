@@ -186,6 +186,8 @@ C26 PASS/FAIL/SKIP  <说明>
 
 ## 附：第二轮补充核查（针对 3f65b2a 之后的提交）
 
+> 第二轮已在 `9cd953e` 上完成（结果见 `docs/STATUS.md` §0-R3）。第三轮请使用 `docs/testing/MACOS_V042_CHECK_PROMPT.md`。
+
 上一轮在 `3f65b2a` 上的结果是 25 项 PASS、1 项 FAIL（C23）。之后有两个新提交：弯曲标注的修复，以及安装器的进度显示、镜像选择和 uv 支持。这两部分只在 Linux 上验证过。请在 Mac 上补做下面几项，规则与正文相同（不改源码、不提交、不调用付费翻译服务）。
 
 - **D1** 重跑 C1 和 C4，记录数字。Linux 上有语料缓存时是 461 passed / 5 skipped。

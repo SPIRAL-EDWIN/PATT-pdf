@@ -1,15 +1,39 @@
-# Status of v0.4.0.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
+# Status of v0.4.2.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.4.0.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.4.2.dev0` (a development pre-release, not a stable release).
 
 **Scope (user decision, 2026-11-08):** the maintainer's work (Claude) covers **macOS and Linux**. **Windows** development and native testing are done by a **Windows collaborator**. Windows support is not dropped: Windows code paths, Windows-specific tests, the Windows retest prompt and the Windows-only CI steps stay in the repository, but the default CI matrix no longer runs Windows jobs. **This version is not verified on Windows in any way.** Known Windows issues for the collaborator are listed in §0-WIN.
 
 **The stage is NOT complete**, and completing it would not mean production readiness.
 
-**Verified for this version (0.4.0.dev0):** only on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2: full suite 461 passed / 5 skipped with the real-document cache present, and the DeepL re-run of §0-Q. Commit `3f65b2a` was checked on the user's Mac (§0-R2: 25 of 26 checks passed); the changes made after it (curved-label fixes, installer) are verified on Linux only. Not run in CI, not run on Python 3.11 or 3.13.
+**Verified for this version (0.4.2.dev0):** on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2, with bash 5.1 and a bash 3.2.57 built from source: full suite 480 passed / 3 skipped with the real-document cache and a setuptools wheelhouse present; ShellCheck 0.10.0 clean. **Not run on macOS**: the two earlier candidates were (§0-R2 for `3f65b2a`, §0-R3 for `9cd953e`), this one is the fix for what the second run found. Not run in CI, not run on Python 3.11 or 3.13.
 **CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
 
 **Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs beyond the twelve pages of §0-P (none in the repository); DeepL beyond those two runs; Preview/Acrobat interaction beyond opening.
+
+## 0-R3. macOS check of 9cd953e: the installer stopped after step 1 and returned 0 (2026-11-13)
+
+**Candidates and names.** The reports call the candidates by round: "v040" = `3f65b2a`, "v041" = `9cd953e`. Both reported package version `0.4.0.dev0`. The package version is now `0.4.2.dev0`, so the next round ("v042") and the version agree; there is no `0.4.1`.
+
+**macOS run of `9cd953e` (Codex, the user's Mac: macOS 27.2.1, Apple M5, system bash 3.2.57, `LC_ALL=C.UTF-8`, CPython 3.12.16).** Report private, not in the repository.
+
+| Check | Result |
+|---|---|
+| D2 map page | PASS: "HUNTING CREEK", "HAYWARD FAULT", "MAACAMA FAULT" and the curved "San Francisco Bay" are complete in Preview. The C23 fix of §0-R2 is confirmed on macOS |
+| Real documents | 16 of 16 passed |
+| D1 full suite | **FAIL**: 456 passed, 9 failed, 1 skipped. All nine in `tests/test_install_script.py` |
+| D4–D7 installer | **FAIL**: `install.sh: line 372: SOURCE\xef: unbound variable` after step 1, no command created, **exit code 0**. With `LC_ALL=C` for the installer process only, all five runs completed |
+| D8 Homebrew parts | not run |
+
+| Defect | Cause | Change | Test |
+|---|---|---|---|
+| Install stops at "第 2/5 步" | `"… $SOURCE（不下载）"`: where the C library counts bytes above 0x7f as letters, bash reads the first byte of the full-width bracket as part of the variable name; the name is unset and `set -u` ends the script. The Chinese strings are arguments of every step, so English output did not avoid it | every variable next to non-ASCII text is written `${name}` (three places) | a static rule over the whole script; five-step runs under six locale settings × two message languages × every available bash; a run in a Latin-1 locale, which shows the failure on Linux with the old script |
+| The stopped install returned 0 | bash 3.2 leaves with status 0 when an EXIT trap runs after an unbound-variable error (bash 5.1 returns 1) | the EXIT trap keeps the status, and an exit that does not come from the end of `main()` is never 0: it prints that the installer stopped and returns 1 | a copy of the script with a deliberate unbound variable must end non-zero under every bash; `--help`, `--uninstall`, argument errors and the doctor's exit code are unchanged |
+| The suite did not catch it | the tests ran the script only with the bash on `PATH` under `C.UTF-8` on Linux, where neither defect shows | tests run every available bash (`/bin/bash` on macOS is 3.2; `PATT_TEST_BASH32` elsewhere); CI runs the installer on macOS with `/bin/bash` under `LC_ALL=C.UTF-8` | |
+
+**How far this is reproduced.** A bash 3.2.57 built from the GNU sources on Linux shows both defects in a Latin-1 locale (`SOURCE\xef: unbound variable`, exit 0 with an EXIT trap) and neither after the fix. Under `C.UTF-8` on Linux the old script did not fail, so the exact macOS condition (`LC_ALL=C.UTF-8` with Apple's bash) is **not** reproduced here; the fix does not depend on the locale, but only a macOS run can confirm it.
+
+**Timings measured on the Mac** (pip, `LC_ALL=C`, Python packages only, about 81 MB): mirror 48.9 s and 31.9 s; official sources 66.5 s, 73.9 s and 62.8 s. pip reported 6.7–16 MB/s from the mirror and 1.8–2.6 MB/s from pypi.org. Some runs overlapped, so these are indications from one machine and one hour, not a benchmark. uv was not installed there; the uv path is still verified with a stand-in only, plus one real run on Linux.
 
 ## 0-R2. macOS check of 3f65b2a and what changed after it (2026-11-13)
 
