@@ -33,7 +33,7 @@ macOS 与 Linux，一行命令：
 curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh | bash
 ```
 
-脚本在执行每一步之前先打印出来，装进自己的独立目录，最后自检。Mac 上如果没有 Homebrew，会先征得你同意再安装。详细说明、手动安装与卸载见 [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md)。
+脚本分五步进行，每一步显示下载量和进度，装进自己的独立目录，最后自检。默认通过国内镜像（清华 TUNA）下载；脚本会先说明并询问，你可以改用官方源，或直接加 `--mirror official`。Mac 上如果没有 Homebrew，会先征得你同意再安装。详细说明、手动安装与卸载见 [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md)。
 
 ## 使用
 

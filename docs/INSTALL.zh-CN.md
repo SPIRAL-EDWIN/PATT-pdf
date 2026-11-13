@@ -17,12 +17,31 @@ curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.
 3. **命令** `~/.local/bin/patt-pdf`；如果该目录不在 `PATH` 中，脚本会询问是否在 shell 启动文件里加一行（或把这一行打印出来由你自行添加）。
 4. `patt-pdf fonts` 与 `patt-pdf doctor`。
 
+### 下载来源与进度
+
+下载任何东西之前，脚本会先说明来源并询问：
+
+```text
+==> 选择下载来源
+      1) 国内镜像【默认】：清华大学 TUNA 镜像站
+      2) 官方源【在中国大陆较慢】：pypi.org、Homebrew、GitHub
+    回车 = 保持镜像，输入 2 = 改用官方源：
+```
+
+* **镜像（默认）。** Python 包来自 `pypi.tuna.tsinghua.edu.cn`，Homebrew 软件包来自 `mirrors.tuna.tsinghua.edu.cn/homebrew-bottles`。这些是镜像站保存的副本，不是原发布方直接提供的文件。pip 和 uv 仍会按所用索引里的哈希校验每个文件。
+* **官方源。** `pypi.org`、Homebrew 自己的服务器和 GitHub。不在中国大陆时请选这个。
+* 可以用 `--mirror cn` 或 `--mirror official`（或环境变量 `PATT_PDF_MIRROR`）预先回答。没有终端时（CI、`--yes`）使用镜像。镜像 8 秒内没有响应时自动改用官方源。
+* 该设置只对本次运行生效，不会改动 pip 和已有 Homebrew 的配置。唯一的例外会在发生时说明：由脚本通过镜像安装的 Homebrew，会继续以镜像作为更新来源。
+* 镜像上没有的两样：PATT-PDF 自己的源码（约 2 MB，来自 GitHub），以及 macOS 上的 Noto CJK 字体（约 235 MB，由 Homebrew 从 GitHub 下载；字体已安装时跳过）。即使选了镜像，这两样仍来自 GitHub。
+
+五个步骤各自显示序号、下载内容和大致下载量，下载工具显示自己的进度。Python 包约 75–110 MB，因平台而异。如果本机已有 [`uv`](https://docs.astral.sh/uv/)，脚本会用它（并行下载），否则用 pip；脚本不会安装 uv。`--no-uv` 强制使用 pip。
+
 想先看再跑？先下载，再运行同一个文件：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh -o install.sh
 less install.sh
-bash install.sh            # 选项：--help、--ref v0.x.y、--no-system、--yes、--uninstall
+bash install.sh            # 选项：--help、--ref v0.x.y、--mirror cn|official、--no-uv、--no-system、--yes、--uninstall
 ```
 
 重新运行脚本即为升级；`bash install.sh --uninstall`（或 `curl … | bash -s -- --uninstall`）会删除虚拟环境和命令链接，不动系统软件包、字体和你的数据。`--no-system` 跳过第 1 步，适合自己安装字体、Tesseract 和 Python 的情况；`--ref` 安装指定标签或提交而不是 `main`。CI 在预备好系统依赖的环境中检查安装流程。Fedora、Arch、openSUSE 的系统软件包安装尚未验证（见[平台状态](STATUS.md)）。该脚本不适用于 Windows。

@@ -33,7 +33,7 @@ macOS and Linux, one command:
 curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh | bash
 ```
 
-The script prints each step before it runs, installs into its own folder and finishes with a self-check. On a Mac without Homebrew it asks before installing Homebrew. Details, manual steps and uninstall: [docs/INSTALL.md](docs/INSTALL.md).
+The script shows five numbered steps with download sizes and progress, installs into its own folder and finishes with a self-check. It downloads through mirrors in mainland China (Tsinghua TUNA) unless you choose the official sources when it asks, or add `--mirror official`. On a Mac without Homebrew it asks before installing Homebrew. Details, manual steps and uninstall: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Use
 

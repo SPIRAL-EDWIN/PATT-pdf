@@ -157,7 +157,7 @@ jobs:
         if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           rc=0
-          bash install.sh --source . --no-system --no-modify-path --python "$(command -v python)" \
+          bash install.sh --source . --no-system --no-modify-path --mirror official --python "$(command -v python)" \
             --prefix "$RUNNER_TEMP/patt-pdf-home" --bin-dir "$RUNNER_TEMP/patt-pdf-bin" || rc=$?
           expected=${{ matrix.ocr && '0' || '2' }}
           echo "installer exit code: $rc (expected $expected)"

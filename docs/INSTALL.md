@@ -17,12 +17,31 @@ The script prints each step before running it and ends with `patt-pdf doctor`, s
 3. **The command** `~/.local/bin/patt-pdf`; if that folder is not on your `PATH`, the script offers to add one line to your shell start-up file (or prints the line for you to add).
 4. `patt-pdf fonts` and `patt-pdf doctor`.
 
+### Download source and progress
+
+Before it downloads anything the script says where from and asks:
+
+```text
+==> Where to download from
+      1) Mirror in mainland China [default]: Tsinghua University TUNA
+      2) Official sources [slower from mainland China]: pypi.org, Homebrew, GitHub
+    Enter = keep the mirror, 2 = official sources:
+```
+
+* **Mirror (default).** Python packages come from `pypi.tuna.tsinghua.edu.cn`, Homebrew packages from `mirrors.tuna.tsinghua.edu.cn/homebrew-bottles`. These are copies kept by the mirror operator, not files served by the original publishers. pip and uv still check each file against the hash in the index they use.
+* **Official.** `pypi.org`, Homebrew's own servers and GitHub. Choose this outside mainland China.
+* Answer in advance with `--mirror cn` or `--mirror official` (or `PATT_PDF_MIRROR`). Without a terminal (CI, `--yes`) the mirror is used. If the mirror does not answer within 8 seconds the official sources are used.
+* The setting applies to this run only; pip and an existing Homebrew are not reconfigured. One exception, announced when it happens: a Homebrew that the script installs through the mirror keeps the mirror as its update source.
+* Not on the mirror: PATT-PDF's own source (about 2 MB from GitHub) and, on macOS, the Noto CJK fonts (about 235 MB from GitHub through Homebrew, skipped when the fonts are already installed). With `--mirror cn` these two still come from GitHub.
+
+Each of the five steps prints its number, what it downloads and roughly how much; the download tools show their own progress. The Python packages are about 75–110 MB depending on the platform. If [`uv`](https://docs.astral.sh/uv/) is already on your machine the script uses it (parallel downloads); otherwise it uses pip. It never installs uv. `--no-uv` forces pip.
+
 Prefer to read before running? Download first, then run the same file:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh -o install.sh
 less install.sh
-bash install.sh            # options: --help, --ref v0.x.y, --no-system, --yes, --uninstall
+bash install.sh            # options: --help, --ref v0.x.y, --mirror cn|official, --no-uv, --no-system, --yes, --uninstall
 ```
 
 Re-running the script upgrades the installation; `bash install.sh --uninstall` (or `curl … | bash -s -- --uninstall`) removes the virtual environment and the command link, and leaves system packages, fonts and your data alone. `--no-system` skips step 1 if you prefer to install fonts, Tesseract and Python yourself; `--ref` installs a tag or commit instead of `main`. CI checks the install with system dependencies already set up. Fedora, Arch and openSUSE package installation has yet to be verified (see [platform status](STATUS.md)). The script is not for Windows.

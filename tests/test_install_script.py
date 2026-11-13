@@ -27,8 +27,10 @@ def _text() -> str:
 
 
 def _run(*args, home: Path, env_extra: dict | None = None, stdin=subprocess.DEVNULL):
-    env = {k: v for k, v in os.environ.items() if k not in ("XDG_DATA_HOME", "SHELL")}
-    env.update(HOME=str(home), **(env_extra or {}))
+    env = {k: v for k, v in os.environ.items() if k not in ("XDG_DATA_HOME", "SHELL", "PATT_PDF_LANG", "LC_ALL", "LC_MESSAGES")}
+    # official sources by default: the mirror choice probes the mirror, and these tests are offline
+    env.update({"HOME": str(home), "PATT_PDF_MIRROR": "official", "LANG": "C.UTF-8", **(env_extra or {})})
+    env = {k: v for k, v in env.items() if v is not None}
     r = subprocess.run([BASH, str(SCRIPT), *map(str, args)], capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=env, stdin=stdin, timeout=600)
     return r.returncode, r.stdout + r.stderr
@@ -71,7 +73,8 @@ def test_children_never_read_the_piped_script():
     questions are read from /dev/tty."""
     t = _text()
     assert 'read -r answer <&3' in t and '3<>/dev/tty' in t
-    for cmd in ("-m venv", "-m pip install", 'bash "$TMPDL/brew-install.sh"', "curl -fsSL --retry"):
+    for cmd in ("-m venv", "-m pip install", 'bash "$TMPDL/brew-install.sh"', "curl -fL --retry", '"$uv" pip install',
+                'curl -fsS -m 8'):
         line = next(l for l in t.splitlines() if cmd in l and not l.lstrip().startswith(("#", "run ")))
         assert "</dev/null" in line or "</dev/tty" in line, line
     assert "run()" in t and '"$@" </dev/null' in t             # run(): the wrapper for the other commands
@@ -206,3 +209,187 @@ def test_real_offline_install_plumbing(tmp_path):
     # uninstall removes exactly what was created
     rc, out = _run("--uninstall", "--prefix", prefix, "--bin-dir", bindir, home=home)
     assert rc == 0 and not link.exists() and not (prefix / "venv").exists(), out
+
+
+# ------------------------------------------------------------------ progress, mirrors, uv
+def test_slow_steps_are_never_silent():
+    """A silent install looks like a hang on a slow connection: pip and curl show progress, and
+    every step says which of five it is and how much it downloads."""
+    t = _text()
+    pip_line = next(l for l in t.splitlines() if "-m pip install" in l and not l.lstrip().startswith("#"))
+    assert "--quiet" not in pip_line and " -q " not in pip_line
+    assert "--progress-bar" in next(l for l in t.splitlines() if "curl -fL --retry" in l)
+    for n in "12345":
+        assert f"step {n} " in t, n
+    assert "STEPS=5" in t and "about $(python_download_mb) MB" in t and "about 235 MB" in t
+
+
+def test_mirror_is_the_announced_default_with_a_way_out():
+    t = _text()
+    body = t[t.index("choose_mirror()"):t.index("# ------------------------------------------------------------------ Homebrew (macOS)")]
+    assert "pypi.tuna.tsinghua.edu.cn/simple" in t and "mirrors.tuna.tsinghua.edu.cn" in t
+    assert "[default]" in body and "[slower from mainland China]" in body          # the two choices, labelled
+    assert "not served by the original publishers" in body                         # says what a mirror is
+    assert "3<>/dev/tty" in body                                                   # asked on the terminal
+    assert "using the official sources instead" in body                            # unreachable mirror
+    # the mirror applies to this run: nothing is written to pip or Homebrew configuration
+    for forbidden in ("pip config", "pip.conf", ".zprofile", "brew tap --custom-remote"):
+        assert forbidden not in t, forbidden
+    assert "will keep it as its update source" in t                                # the one lasting effect is announced
+
+
+@needs_bash
+def test_mirror_option_is_validated(tmp_path):
+    rc, out = _run("--mirror", "fastest", home=tmp_path)
+    assert rc == 1 and "--mirror must be 'cn' or 'official'" in out
+    assert not list(tmp_path.iterdir())
+    rc, out = _run("--help", home=tmp_path)
+    assert "--mirror cn" in out and "--mirror official" in out and "--no-uv" in out
+
+
+FAKE_UV = """#!/bin/bash
+# records the call and creates a working stand-in for the installed command
+{ echo "ARGS $*"; echo "INDEX ${UV_DEFAULT_INDEX:-none}"; echo "PIPINDEX ${PIP_INDEX_URL:-none}"; } >> "$UV_LOG"
+py=""; prev=""
+for a in "$@"; do [ "$prev" = "--python" ] && py="$a"; prev="$a"; done
+[ "${UV_FAIL:-0}" = 1 ] && exit 1
+printf '#!/bin/sh\necho "stand-in $*"\n' > "$(dirname "$py")/patt-pdf" && chmod +x "$(dirname "$py")/patt-pdf"
+"""
+FAKE_CURL = """#!/bin/bash
+echo "CURL $*" >> "$UV_LOG"
+exit ${CURL_RC:-0}
+"""
+
+
+def _tools(tmp_path, uv=True, curl=True):
+    d = tmp_path / "fakebin"; d.mkdir(exist_ok=True)
+    for name, text, on in (("uv", FAKE_UV, uv), ("curl", FAKE_CURL, curl)):
+        if on:
+            (d / name).write_text(text, encoding="utf-8"); (d / name).chmod(0o755)
+    path = os.pathsep.join([str(d)] + [p for p in os.environ["PATH"].split(os.pathsep)
+                                       if not os.path.exists(os.path.join(p, "uv"))])
+    return {"PATH": path, "UV_LOG": str(tmp_path / "uv.log")}
+
+
+def _install(tmp_path, *extra, env=None, name="p"):
+    home = tmp_path / "home"; home.mkdir(exist_ok=True)
+    return _run("--source", ROOT, "--no-system", "--no-modify-path", "--python", sys.executable,
+                "--prefix", tmp_path / name, "--bin-dir", tmp_path / (name + "-bin"), *extra, home=home, env_extra=env)
+
+
+def _log(tmp_path):
+    p = tmp_path / "uv.log"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+@needs_bash
+def test_uv_is_used_when_present_with_the_mirror_and_numbered_steps(tmp_path):
+    env = dict(_tools(tmp_path), PATT_PDF_MIRROR=None)                 # no choice given, no terminal: the default
+    rc, out = _install(tmp_path, env=env)
+    log = _log(tmp_path)
+    assert rc == 0, out[-2000:]
+    assert "installer: uv" in out and "ARGS pip install --python" in log
+    assert "INDEX https://pypi.tuna.tsinghua.edu.cn/simple" in log
+    assert "no terminal to ask in: using the mirror" in out and "download source: MIRROR" in out
+    assert "CURL -fsS -m 8" in log                                     # the mirror was probed first
+    for n in range(1, 6):
+        assert f"Step {n}/5:" in out, (n, out[-1500:])
+    assert out.index("Step 1/5") < out.index("Step 3/5") < out.index("Step 5/5")
+    assert "MB from the mirror" in out and "Where to download from" in out
+    assert (tmp_path / "p-bin" / "patt-pdf").is_symlink()
+
+
+@needs_bash
+def test_official_sources_set_no_mirror(tmp_path):
+    rc, out = _install(tmp_path, "--mirror", "official", env=_tools(tmp_path))
+    log = _log(tmp_path)
+    assert rc == 0 and "download source: OFFICIAL" in out and "MB from the official source" in out
+    assert "INDEX none" in log and "PIPINDEX none" in log and "CURL" not in log
+    assert "Where to download from" not in out                         # decided on the command line: not asked
+
+
+@needs_bash
+def test_unreachable_mirror_falls_back_to_the_official_sources(tmp_path):
+    env = dict(_tools(tmp_path), CURL_RC="28")
+    rc, out = _install(tmp_path, "--mirror", "cn", env=env)
+    assert rc == 0 and "using the official sources instead" in out and "download source: OFFICIAL" in out
+    assert "INDEX none" in _log(tmp_path)
+
+
+@needs_bash
+def test_pip_is_used_without_uv_with_no_uv_and_with_pip_args(tmp_path):
+    offline = {"PIP_NO_INDEX": "1"}                                    # pip fails at once instead of downloading
+    # --no-uv
+    rc, out = _install(tmp_path, "--no-uv", env=dict(_tools(tmp_path), **offline))
+    assert "installer: pip" in out and "installer: uv" not in out and "ARGS" not in _log(tmp_path)
+    assert rc == 1 and "pip install failed" in out
+    # pip arguments are pip's: uv is not used
+    rc, out = _install(tmp_path, "--pip-arg=--no-index", env=_tools(tmp_path), name="q")
+    assert "installer: pip" in out and "ARGS" not in _log(tmp_path)
+    # no uv on this machine
+    (tmp_path / "fakebin" / "uv").unlink()
+    rc, out = _install(tmp_path, env=dict(_tools(tmp_path, uv=False), **offline), name="r")
+    assert "installer: pip" in out and "installer: uv" not in out
+    for n in "pqr":                                                    # a failed install leaves nothing behind
+        assert not (tmp_path / n / "venv").exists() and not (tmp_path / (n + "-bin") / "patt-pdf").exists()
+
+
+@needs_bash
+def test_failing_uv_is_retried_with_pip(tmp_path):
+    env = dict(_tools(tmp_path), UV_FAIL="1", PIP_NO_INDEX="1")
+    rc, out = _install(tmp_path, env=env)
+    assert "uv failed; trying again with pip" in out and "installer: pip" in out
+    assert out.index("installer: uv") < out.index("installer: pip")
+
+
+@needs_bash
+def test_messages_are_chinese_in_a_chinese_locale(tmp_path):
+    env = dict(_tools(tmp_path), PATT_PDF_MIRROR=None, PATT_PDF_LANG="zh_CN.UTF-8")
+    rc, out = _install(tmp_path, env=env)
+    assert rc == 0
+    for text in ("选择下载来源", "国内镜像【默认】", "官方源【在中国大陆较慢】", "第 1/5 步", "第 3/5 步", "第 5/5 步", "下载来源：镜像"):
+        assert text in out, text
+
+
+def _with_terminal(tmp_path, answer: bytes, env_extra):
+    """Run the installer with a real controlling terminal and type `answer` at the prompt."""
+    import pty
+    import select
+    home = tmp_path / "home"; home.mkdir(exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in ("XDG_DATA_HOME", "SHELL", "PATT_PDF_MIRROR", "LC_ALL", "PATT_PDF_LANG")}
+    env.update(HOME=str(home), LANG="C.UTF-8", **env_extra)
+    args = [BASH, str(SCRIPT), "--source", str(ROOT), "--no-system", "--no-modify-path", "--python", sys.executable,
+            "--prefix", str(tmp_path / "p"), "--bin-dir", str(tmp_path / "p-bin")]
+    pid, fd = pty.fork()
+    if pid == 0:                                                       # child: the pty is its controlling terminal
+        os.execve(BASH, args, env)
+    out, sent = b"", False
+    while True:
+        r, _, _ = select.select([fd], [], [], 120)
+        if not r:
+            break
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+        if not sent and b"official sources:" in out:
+            os.write(fd, answer); sent = True
+    _, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status), out.decode("utf-8", "replace"), sent
+
+
+@needs_bash
+@pytest.mark.skipif(sys.platform == "win32" or not hasattr(os, "waitstatus_to_exitcode"), reason="needs a POSIX pty")
+@pytest.mark.parametrize("answer,mirror", [(b"\n", True), (b"2\n", False)])
+def test_question_on_a_terminal_enter_keeps_the_mirror_two_switches(tmp_path, answer, mirror):
+    rc, out, asked = _with_terminal(tmp_path, answer, _tools(tmp_path))
+    assert asked, out[-1500:]
+    assert rc == 0, out[-1500:]
+    log = _log(tmp_path)
+    if mirror:
+        assert "download source: MIRROR" in out and "INDEX https://pypi.tuna.tsinghua.edu.cn/simple" in log
+    else:
+        assert "download source: OFFICIAL" in out and "INDEX none" in log and "CURL" not in log

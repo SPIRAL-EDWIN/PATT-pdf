@@ -21,11 +21,23 @@
 #   --bin-dir DIR      where the `patt-pdf` link goes (default: ~/.local/bin)
 #   --python PATH      use this interpreter instead of searching for one
 #   --pip-arg=ARG      extra argument for pip (repeatable, never split on spaces), e.g. a wheelhouse
+#   --mirror cn        download through mirrors in mainland China (the default; see below)
+#   --mirror official  download from the official sources (pypi.org, Homebrew, GitHub)
+#   --no-uv            install the Python packages with pip even if `uv` is available
 #   --no-system        do not install system packages (fonts, Tesseract, Python); only report them
 #   --no-modify-path   never edit shell start-up files
 #   --yes, -y          non-interactive: assume "yes" (also for installing Homebrew and editing PATH)
 #   --uninstall        remove the virtual environment and the link created by this script
 #   --help, -h         this text
+#
+# Download sources. Most users of an English->Chinese tool are in mainland China, where pypi.org
+# and Homebrew's servers are slow. By default the script therefore uses the TUNA mirrors of
+# Tsinghua University (pypi.tuna.tsinghua.edu.cn, mirrors.tuna.tsinghua.edu.cn). It says so
+# before downloading anything and lets you choose the official sources instead; --mirror (or
+# PATT_PDF_MIRROR=cn|official) answers the question in advance. If the mirror cannot be reached,
+# the official sources are used. The mirror setting applies to this run only, with one exception
+# that is announced: a Homebrew that this script installs through the mirror keeps the mirror
+# as its update source.
 #
 # Windows is not covered by this script; see README.md.
 #
@@ -41,6 +53,11 @@ PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/patt-pdf"
 BIN_DIR="$HOME/.local/bin"
 PYTHON=""
 PIP_ARGS=()
+MIRROR="${PATT_PDF_MIRROR:-}"                # cn | official | "" (ask)
+PYPI_MIRROR="https://pypi.tuna.tsinghua.edu.cn/simple"
+TUNA="https://mirrors.tuna.tsinghua.edu.cn"
+USE_UV=1
+STEPS=5
 INSTALL_SYSTEM=1
 MODIFY_PATH=1
 ASSUME_YES=0
@@ -58,6 +75,15 @@ warn() { printf '\n!!  %s\n' "$*" >&2; }
 die()  { printf '\nerror: %s\n' "$*" >&2; exit 1; }
 run()  { note "\$ $*"; "$@" </dev/null; }
 
+# Messages in Chinese when the locale is Chinese (PATT_PDF_LANG overrides), otherwise English.
+ZH=0
+case "${PATT_PDF_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in zh*|ZH*) ZH=1 ;; esac
+L() { if [ "$ZH" = 1 ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
+step() {                                      # step N "english" "中文"
+  if [ "$ZH" = 1 ]; then printf '\n==> 第 %s/%s 步：%s\n' "$1" "$STEPS" "$3"
+  else printf '\n==> Step %s/%s: %s\n' "$1" "$STEPS" "$2"; fi
+}
+
 usage() {
   cat <<'EOF'
 PATT-PDF installer for macOS and Linux
@@ -72,6 +98,9 @@ Options:
   --bin-dir DIR      where the patt-pdf link goes (default: ~/.local/bin)
   --python PATH      use this interpreter instead of searching for one
   --pip-arg=ARG      extra argument for pip (repeatable)
+  --mirror cn        use mirrors in mainland China (default; you are asked first)
+  --mirror official  use pypi.org, Homebrew and GitHub directly
+  --no-uv            use pip even if uv is available
   --no-system        do not install system packages (fonts, Tesseract, Python)
   --no-modify-path   never edit shell start-up files
   --yes, -y          non-interactive: assume "yes" everywhere
@@ -105,6 +134,9 @@ parse_args() {
       --python)     [ $# -ge 2 ] || die "--python needs a value"; PYTHON="$2"; shift 2 ;;
       --python=*)   PYTHON="${1#--python=}"; shift ;;
       --pip-arg=*)  PIP_ARGS+=("${1#--pip-arg=}"); shift ;;
+      --mirror)     [ $# -ge 2 ] || die "--mirror needs a value (cn or official)"; MIRROR="$2"; shift 2 ;;
+      --mirror=*)   MIRROR="${1#--mirror=}"; shift ;;
+      --no-uv)      USE_UV=0; shift ;;
       --no-system)  INSTALL_SYSTEM=0; shift ;;
       --no-modify-path) MODIFY_PATH=0; shift ;;
       --yes|-y)     ASSUME_YES=1; shift ;;
@@ -113,6 +145,7 @@ parse_args() {
       *) die "unknown option: $1 (try --help)" ;;
     esac
   done
+  case "$MIRROR" in ""|cn|official) ;; *) die "--mirror must be 'cn' or 'official' (got: $MIRROR)" ;; esac
   case "$PREFIX" in /*) ;; *) die "--prefix must be an absolute path" ;; esac
   case "$BIN_DIR" in /*) ;; *) die "--bin-dir must be an absolute path" ;; esac
   if [ "$PREFIX" = "/" ] || [ "$PREFIX" = "$HOME" ]; then die "refusing to use $PREFIX as the installation folder"; fi
@@ -138,6 +171,56 @@ detect_platform() {
   fi
 }
 
+# ------------------------------------------------------------------ download source
+own_index() {                                   # the caller chose a package index (or none) for pip
+  local a
+  for a in ${PIP_ARGS[@]+"${PIP_ARGS[@]}"}; do
+    case "$a" in --index-url*|-i|-i=*|--no-index|--extra-index-url*) return 0 ;; esac
+  done
+  return 1
+}
+
+choose_mirror() {
+  if [ "$INSTALL_SYSTEM" = 0 ] && own_index; then MIRROR=official; return 0; fi   # nothing left to choose
+  if [ -z "$MIRROR" ]; then
+    say "$(L "Where to download from" "选择下载来源")"
+    note "$(L "This installer downloads Python packages (and on macOS Homebrew packages)." \
+              "安装过程需要下载 Python 包（macOS 上还有 Homebrew 软件包）。")"
+    note "$(L "  1) Mirror in mainland China [default]: Tsinghua University TUNA" \
+              "  1) 国内镜像【默认】：清华大学 TUNA 镜像站")"
+    note "       $PYPI_MIRROR"
+    [ "$OS" = macos ] && note "       $TUNA/homebrew-bottles"
+    note "$(L "  2) Official sources [slower from mainland China]: pypi.org, Homebrew, GitHub" \
+              "  2) 官方源【在中国大陆较慢】：pypi.org、Homebrew、GitHub")"
+    note "$(L "Mirror files are copies kept by the mirror operator, not served by the original publishers." \
+              "镜像文件是镜像站保存的副本，不是由原发布方直接提供的。")"
+    local answer=""
+    if [ "$ASSUME_YES" = 1 ]; then
+      MIRROR=cn; note "$(L "[auto] using the mirror; choose with --mirror official" "[自动] 使用镜像；如需官方源请加 --mirror official")"
+    elif { printf '%s ' "$(L "Enter = keep the mirror, 2 = official sources:" "回车 = 保持镜像，输入 2 = 改用官方源：")" >&3 \
+           && read -r answer <&3; } 2>/dev/null 3<>/dev/tty; then
+      case "$answer" in 2|o|O|official|OFFICIAL) MIRROR=official ;; *) MIRROR=cn ;; esac
+    else
+      MIRROR=cn
+      note "$(L "no terminal to ask in: using the mirror (re-run with --mirror official to change)" \
+                "没有可提问的终端：使用镜像（如需官方源请加 --mirror official 重新运行）")"
+    fi
+  fi
+  if [ "$MIRROR" = cn ] && command -v curl >/dev/null 2>&1 \
+     && ! curl -fsS -m 8 -o /dev/null "$PYPI_MIRROR/pip/" </dev/null 2>/dev/null; then
+    warn "$(L "the mirror did not answer within 8 seconds: using the official sources instead" \
+              "镜像站 8 秒内没有响应：改用官方源")"
+    MIRROR=official
+  fi
+  if [ "$MIRROR" = cn ]; then
+    note "$(L "download source: MIRROR (Tsinghua TUNA)" "下载来源：镜像（清华 TUNA）")"
+    # pip and uv read these; an explicit --pip-arg=--index-url still wins
+    export PIP_INDEX_URL="$PYPI_MIRROR" UV_DEFAULT_INDEX="$PYPI_MIRROR" UV_INDEX_URL="$PYPI_MIRROR"
+  else
+    note "$(L "download source: OFFICIAL (pypi.org, Homebrew, GitHub)" "下载来源：官方源（pypi.org、Homebrew、GitHub）")"
+  fi
+}
+
 # ------------------------------------------------------------------ Homebrew (macOS)
 ensure_homebrew() {
   if command -v brew >/dev/null 2>&1; then return 0; fi
@@ -152,7 +235,24 @@ ensure_homebrew() {
     die "Homebrew is required on macOS. Install it from https://brew.sh (or use --no-system and install fonts, Tesseract and Python >= 3.10 yourself), then re-run this installer."
   fi
   TMPDL="$(mktemp -d)"
-  run curl -fsSL -o "$TMPDL/brew-install.sh" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
+  local got=0
+  if [ "$MIRROR" = cn ]; then
+    # Homebrew itself is cloned from the mirror and keeps it as its update source.
+    export HOMEBREW_BREW_GIT_REMOTE="$TUNA/git/homebrew/brew.git"
+    export HOMEBREW_CORE_GIT_REMOTE="$TUNA/git/homebrew/homebrew-core.git"
+    note "$(L "Homebrew will be installed from the mirror and will keep it as its update source." \
+              "Homebrew 将从镜像安装，并继续以镜像作为更新来源。")"
+    note "$(L "To switch it back later:" "以后如需改回官方源：")  git -C \"\$(brew --repo)\" remote set-url origin https://github.com/Homebrew/brew"
+    if xcode-select -p >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+      if run git clone --depth=1 "$TUNA/git/homebrew/install.git" "$TMPDL/brew-install"; then
+        cp "$TMPDL/brew-install/install.sh" "$TMPDL/brew-install.sh"; got=1
+      fi
+    fi
+  fi
+  if [ "$got" = 0 ]; then
+    run curl -fL --progress-bar -o "$TMPDL/brew-install.sh" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh \
+      || die "could not download the Homebrew installer"
+  fi
   if [ "$ASSUME_YES" = 1 ]; then
     env -u INTERACTIVE NONINTERACTIVE=1 /bin/bash "$TMPDL/brew-install.sh" </dev/null || die "Homebrew installation failed"
   else
@@ -167,15 +267,39 @@ ensure_homebrew() {
 }
 
 # ------------------------------------------------------------------ system packages
+have_noto_fonts() {                             # both families already installed for this user or system-wide
+  local fam d found
+  for fam in NotoSansCJK NotoSerifCJK; do
+    found=0
+    for d in "$HOME/Library/Fonts" /Library/Fonts; do
+      if ls "$d"/"$fam"* >/dev/null 2>&1; then found=1; break; fi
+    done
+    [ "$found" = 1 ] || return 1
+  done
+  return 0
+}
+
 install_system_macos() {
   ensure_homebrew
-  say "Installing fonts and Tesseract with Homebrew"
+  step 1 "system components with Homebrew (fonts, Tesseract)" "用 Homebrew 安装系统组件（字体、Tesseract）"
   export HOMEBREW_NO_INSTALL_CLEANUP=1      # brew may still update itself first: current bottles need a current brew
+  if [ "$MIRROR" = cn ]; then
+    # for these brew calls only; an existing Homebrew is not reconfigured
+    export HOMEBREW_API_DOMAIN="$TUNA/homebrew-bottles/api" HOMEBREW_BOTTLE_DOMAIN="$TUNA/homebrew-bottles"
+    note "$(L "Homebrew packages come from the mirror for this run:" "本次运行的 Homebrew 软件包来自镜像：") $HOMEBREW_BOTTLE_DOMAIN"
+  fi
   # casks: Noto Sans CJK / Noto Serif CJK (SIL OFL 1.1) into ~/Library/Fonts
-  run brew install --cask font-noto-sans-cjk font-noto-serif-cjk || die "font installation failed"
+  if have_noto_fonts; then
+    note "$(L "Noto Sans/Serif CJK fonts are already installed: not downloaded again" "Noto Sans/Serif CJK 字体已安装：不重复下载")"
+  else
+    note "$(L "Noto CJK fonts: about 235 MB. Homebrew downloads them from GitHub (they are not on the mirror), so this is the slow part." \
+              "Noto CJK 字体：约 235 MB。Homebrew 从 GitHub 下载（镜像上没有这两个文件），这是最慢的一步。")"
+    run brew install --cask font-noto-sans-cjk font-noto-serif-cjk || die "font installation failed"
+  fi
+  note "$(L "Tesseract (OCR engine with English data) and the libraries it needs" "Tesseract（OCR 引擎，含英文数据）及其依赖库")"
   run brew install tesseract || die "Tesseract installation failed"   # includes English data
   if [ -z "$PYTHON" ] && ! find_python >/dev/null; then
-    say "No Python >= 3.10 found: installing python@3.12 with Homebrew"
+    note "$(L "no Python >= 3.10 found: installing python@3.12 with Homebrew" "没有找到 Python >= 3.10：用 Homebrew 安装 python@3.12")"
     run brew install python@3.12 || die "Python installation failed"
   fi
 }
@@ -186,7 +310,9 @@ install_system_linux() {
     note "install yourself: Noto Sans/Serif CJK SC fonts, tesseract with English data, python3 (>= 3.10) with venv"
     return 0
   fi
-  say "Installing fonts, Tesseract and Python with $PKG${SUDO:+ (via sudo; you may be asked for your password)}"
+  step 1 "system components with $PKG (fonts, Tesseract, Python)${SUDO:+; sudo may ask for your password}" \
+         "用 $PKG 安装系统组件（字体、Tesseract、Python）${SUDO:+；sudo 可能会要求输入密码}"
+  note "$(L "the package manager prints its own download size and progress" "包管理器会显示自己的下载量和进度")"
   local fail="system package installation failed (see the package manager's messages above)"
   case "$PKG" in
     apt)
@@ -243,19 +369,33 @@ fetch_source() {                                # sets SRC to a directory or an 
     cp "$SOURCE/pyproject.toml" "$SOURCE/README.md" "$SOURCE/LICENSE" "$SRC/"
     cp -R "$SOURCE/src/patt_pdf" "$SRC/src/patt_pdf"
     find "$SRC" \( -name __pycache__ -o -name '*.egg-info' \) -prune -exec rm -rf {} +
+    step 2 "PATT-PDF source: local copy of $SOURCE (no download)" "PATT-PDF 源码：使用本地目录 $SOURCE（不下载）"
     return 0
   fi
   command -v curl >/dev/null 2>&1 || die "curl is required to download PATT-PDF"
   SRC="$TMPDL/patt-pdf.tar.gz"
   local url="https://github.com/$PATT_REPO/archive/$REF.tar.gz"
-  say "Downloading PATT-PDF ($REF)"
+  step 2 "download PATT-PDF ($REF), about 2 MB, from GitHub" "从 GitHub 下载 PATT-PDF（$REF），约 2 MB"
   note "$url"
-  curl -fsSL --retry 3 -o "$SRC" "$url" </dev/null || die "download failed: $url"
+  curl -fL --retry 3 --progress-bar -o "$SRC" "$url" </dev/null || die "download failed: $url"
+}
+
+python_download_mb() {                          # wheels of PyMuPDF, OpenCV, NumPy, fontTools (PyPI, 2026-11)
+  case "$OS/$(uname -m)" in
+    macos/arm64)   printf 85 ;;
+    macos/x86_64)  printf 75 ;;
+    linux/x86_64)  printf 110 ;;
+    linux/aarch64|linux/arm64) printf 85 ;;
+    *) printf 100 ;;
+  esac
 }
 
 install_package() {
-  local py="$1" venv="$PREFIX/venv"
-  say "Creating the virtual environment in $(tilde "$venv")"
+  local py="$1" venv="$PREFIX/venv" uv="" where
+  if [ "$MIRROR" = cn ]; then where="$(L "mirror" "镜像")"; else where="$(L "official source" "官方源")"; fi
+  step 3 "Python packages, about $(python_download_mb) MB from the $where (PyMuPDF, OpenCV, NumPy, fontTools)" \
+         "Python 包，约 $(python_download_mb) MB，来自$where（PyMuPDF、OpenCV、NumPy、fontTools）"
+  note "$(L "virtual environment:" "虚拟环境：") $(tilde "$venv")"
   note "python: $py ($("$py" -c 'import platform; print(platform.python_version())'))"
   if [ -e "$venv" ] || [ -L "$venv" ]; then
     if [ -L "$venv" ] || [ ! -f "$venv/pyvenv.cfg" ] || [ ! -f "$PREFIX/$MARKER" ]; then
@@ -266,10 +406,23 @@ install_package() {
   fi
   REPLACE_VENV=1
   "$py" -m venv "$venv" </dev/null || die "could not create the virtual environment (on Debian/Ubuntu: sudo apt install python3-venv)"
-  say "Installing PATT-PDF (full package, including OpenCV; PyMuPDF, NumPy and fontTools)"
   export PIP_DISABLE_PIP_VERSION_CHECK=1
+  # uv downloads in parallel and is much faster than pip. It is used when it is already on
+  # this machine; it is never installed by this script. --pip-arg options are pip's, so pip
+  # is used when any are given.
+  if [ "$USE_UV" = 1 ] && [ "${#PIP_ARGS[@]}" = 0 ] && command -v uv >/dev/null 2>&1; then uv="$(command -v uv)"; fi
+  if [ -n "$uv" ]; then
+    note "$(L "installer: uv (found on this machine; parallel downloads)" "安装工具：uv（本机已有，并行下载）")"
+    if "$uv" pip install --python "$venv/bin/python" "$SRC" </dev/null; then
+      [ -x "$venv/bin/patt-pdf" ] || die "installation finished but $(tilde "$venv")/bin/patt-pdf is missing"
+      return 0
+    fi
+    warn "$(L "uv failed; trying again with pip" "uv 安装失败；改用 pip 重试")"
+  fi
+  note "$(L "installer: pip (progress is shown per package)" "安装工具：pip（逐个包显示进度）")"
+  # no --quiet: on a slow connection a silent install looks like a hang
   # ${arr[@]+"${arr[@]}"}: an empty array is an "unbound variable" for bash 3.2 (macOS) under set -u
-  "$venv/bin/python" -m pip install --quiet ${PIP_ARGS[@]+"${PIP_ARGS[@]}"} "$SRC" </dev/null \
+  "$venv/bin/python" -m pip install ${PIP_ARGS[@]+"${PIP_ARGS[@]}"} "$SRC" </dev/null \
     || die "pip install failed (see pip's messages above)"
   [ -x "$venv/bin/patt-pdf" ] || die "installation finished but $(tilde "$venv")/bin/patt-pdf is missing"
 }
@@ -284,7 +437,7 @@ check_command_path() {
 }
 
 link_command() {
-  say "Linking the command to $(tilde "$BIN_DIR")/patt-pdf"
+  step 4 "link the command to $(tilde "$BIN_DIR")/patt-pdf" "把命令链接到 $(tilde "$BIN_DIR")/patt-pdf"
   mkdir -p "$BIN_DIR"
   check_command_path
   if [ ! -L "$BIN_DIR/patt-pdf" ]; then
@@ -332,9 +485,10 @@ offer_path() {
 
 check_install() {
   local pp="$PREFIX/venv/bin/patt-pdf" rc=0
-  say "Preparing fonts (patt-pdf fonts)"
+  step 5 "prepare fonts and check the installation (patt-pdf fonts, patt-pdf doctor)" \
+         "准备字体并检查安装（patt-pdf fonts、patt-pdf doctor）"
   "$pp" fonts </dev/null || rc=$?
-  say "Checking the installation (patt-pdf doctor)"
+  note "patt-pdf doctor:"
   "$pp" doctor </dev/null || rc=$?
   return $rc
 }
@@ -393,10 +547,11 @@ main() {
 
   say "PATT-PDF installer ($OS${PKG:+/$PKG}) — full install: fonts, Tesseract + English data, OpenCV"
   note "install folder: $(tilde "$PREFIX")   command: $(tilde "$BIN_DIR")/patt-pdf"
+  choose_mirror
   if [ "$INSTALL_SYSTEM" = 1 ]; then
     if [ "$OS" = macos ]; then install_system_macos; else install_system_linux; fi
   else
-    say "System packages skipped (--no-system)"
+    step 1 "system components: skipped (--no-system)" "系统组件：已跳过（--no-system）"
   fi
 
   if [ -z "$PYTHON" ]; then
