@@ -83,6 +83,15 @@ def _group_cells(cells, para_gap=0.75):
             heading = s >= 1.3 * body
             cont = (bool(re.match(r"^[a-z0-9(\"“'‘$%&,-]", nt)) or not re.search(r"[.:;!?)]$", lt)
                     or (heading and not re.search(r"[.:;!?]$", lt)))
+            # Justified body text: a line that fills the column and ends with a full stop is not
+            # a paragraph end when the next line starts at the same left edge of the same block
+            # (a new paragraph would be indented, separated by a gap, or follow a short line).
+            full = last["x1"] >= ref - 1.2 * s
+            dx = last["x0"] - c["x0"]
+            if (not ocr and not cont and full and same_block and len(lt) > 25
+                    and (abs(dx) < 1.0 or (len(p) == 1 and 0 < dx < 4 * s))
+                    and re.match(r"^[A-Z0-9(\[\"“‘']", nt)):
+                cont = True
             if c.get("bullet"):
                 paras.append([c]); continue
             row_end = last.get("rownum", False)                       # table row with figures

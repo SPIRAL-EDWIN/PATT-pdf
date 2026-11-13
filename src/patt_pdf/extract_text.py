@@ -9,7 +9,7 @@ import re
 import pymupdf
 
 from .grouping import _group_cells, _para_to_unit, _rgb, _uid, mark_rows
-from .keep import BOLD_HINT, HAS_LATIN, SEP_CHARS, SERIF_HINT, is_keep
+from .keep import BOLD_HINT, HAS_LATIN, SEP_CHARS, font_family, is_keep
 from .model import PagePlan, Unit
 
 def _pieces(line):
@@ -59,7 +59,7 @@ def plan_text_page(pg, pno):
                 rotated.append(Unit(uid=_uid(pno, "rot", len(rotated), t), page=pno, kind="text", src=t,
                                     bbox=list(l["bbox"]), lines=[[o[0], o[1], o[0], o[1], o[1]]],
                                     size=sp0["size"], bold=bool(sp0["flags"] & 16) or bool(BOLD_HINT.search(sp0["font"])),
-                                    family="serif" if SERIF_HINT.search(sp0["font"]) else "sans",
+                                    family=font_family(sp0["font"], sp0["flags"]),
                                     color=_rgb(sp0["color"]), erase=[list(c["bbox"]) for c in chars if c["c"].strip()],
                                     angle=ang))
                 continue
@@ -103,7 +103,7 @@ def plan_text_page(pg, pno):
                             x0=r.x0, y0=r.y0, x1=r.x1, y1=r.y1, text=text, block=bi,
                             size=round(main["size"], 2), base=main["origin"][1],
                             bold=bool(main["flags"] & 16) or bool(BOLD_HINT.search(fname)),
-                            family="serif" if (main["flags"] & 4 or SERIF_HINT.search(fname)) else "sans",
+                            family=font_family(fname, main["flags"]),
                             color=_rgb(main["color"]), erase=[list(x["bbox"]) for x in g])))
                     keeps.append([r.x0, r.y0, r.x1, r.y1, text.strip()]); continue
                 fname = main["font"]
@@ -111,7 +111,7 @@ def plan_text_page(pg, pno):
                     x0=r.x0, y0=r.y0, x1=r.x1, y1=r.y1, text=text, block=bi,
                     size=round(main["size"], 2), base=main["origin"][1],
                     bold=bool(main["flags"] & 16) or bool(BOLD_HINT.search(fname)),
-                    family="serif" if (main["flags"] & 4 or SERIF_HINT.search(fname)) else "sans",
+                    family=font_family(fname, main["flags"]),
                     color=_rgb(max(((sum(len(x["text"]) for x in g if x["color"] == c_), c_) for c_ in set(x["color"] for x in g)))[1]),
                     erase=[list(s["bbox"]) for s in g], sepL=bool(sepL), sepR=bool(sepR)))
     # absorb a whole-line figure into the paragraph it ends: a wrapped text line of the same

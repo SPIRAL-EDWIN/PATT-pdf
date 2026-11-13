@@ -644,7 +644,7 @@ def _compare_links(src, out_path, plans, pages):
     """Independent check on the saved file: every link target of the source page must still
     exist on the output page (MuPDF redaction deletes overlapping links)."""
     def targets(p):
-        return sorted(str((l.get("kind"), l.get("uri"), l.get("page"), l.get("file"), l.get("name")))
+        return sorted(str((l.get("kind"), l.get("uri"), l.get("page"), l.get("file"), l.get("name"), l.get("nameddest")))
                       for l in p.get_links())
     with pymupdf.open(src) as s_, pymupdf.open(out_path) as o_:
         for plan, pq in zip(plans, pages):

@@ -17,7 +17,9 @@ import pymupdf
 
 # ------------------------------------------------------------------ numbers
 _NUM = re.compile(r"(?i)(?<![A-Za-z0-9.])[-−–(]?[$€£¥]?\s?\d[\d,]*(?:\.\d+)?\s?"
-                  r"(?:%|trillion|billion|million|thousand|tn|bn|mn|b\b|m\b|k\b|万亿|亿|万|千|百万|十亿)?\)?")
+                  r"(?:%|(?:trillion|billion|million|thousand|tn|bn|mn|b|m|k)(?![A-Za-z0-9])|[多余]?(?:万亿|亿|万|千|百万|十亿))?\)?")
+# NOTE: the scale words end with an ASCII-only lookahead, not \b: "540B提示" has no \b after
+# the B (CJK characters are \w), so the same token read 5.4e11 in English and 540 in Chinese.
 # NOTE: the lookbehind must be ASCII-only — Python's \w matches CJK characters, which
 # would hide every digit that directly follows Chinese text ("第1项").
 _SCALE = {"b": 1e9, "trillion": 1e12, "tn": 1e12, "万亿": 1e12, "billion": 1e9, "bn": 1e9, "million": 1e6,
@@ -77,6 +79,11 @@ def number_check(src: str, tgt: str) -> list[str]:
     src = _expand_ranges(src)
     src = re.sub(r"(?<=[a-z.)”\"])(\d{1,3}(?:,\d{1,3})+)(?=\s)", lambda m: m.group(0).replace(",", " "), src)  # footnote marks
     src = re.sub(r"(?i)\b(\d+)\s?M\s+(USD|EUR|CHF)\b", r"\1-month \2", src)                           # "3 M USD LIBOR"
+    src = re.sub(r"(?<=\d),\s(?=\d{3}(?!\d))", ",", src)          # TeX thin space: "2, 000" = 2,000
+    # reference marks such as "Coyle1,2,3": groups of one or two digits cannot be a thousands
+    # grouping; read them as separate numbers on both sides
+    marks = lambda x: re.sub(r"(?<![\d.,])\d{1,2}(?:,\d{1,2})+(?![\d.,]|\s?%)", lambda m: m.group(0).replace(",", " "), x)
+    src, tgt = marks(src), marks(tgt)
     for pat in NON_QUANTITY_IDIOMS:
         src = re.sub(pat, " ", src, flags=re.I)
     s, t = numbers(src), numbers(tgt)

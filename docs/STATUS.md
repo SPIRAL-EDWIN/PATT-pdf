@@ -1,15 +1,36 @@
-# Status of v0.3.8.dev0 (2026-11-08): experimental test candidate (macOS/Linux scope)
+# Status of v0.3.9.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.8.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.9.dev0` (a development pre-release, not a stable release).
 
 **Scope (user decision, 2026-11-08):** the maintainer's work (Claude) covers **macOS and Linux**. **Windows** development and native testing are done by a **Windows collaborator**. Windows support is not dropped: Windows code paths, Windows-specific tests, the Windows retest prompt and the Windows-only CI steps stay in the repository, but the default CI matrix no longer runs Windows jobs. **This version is not verified on Windows in any way.** Known Windows issues for the collaborator are listed in §0-WIN.
 
 **The stage is NOT complete**, and completing it would not mean production readiness.
 
-**Verified for this version:** only on Linux aarch64 (container): CPython 3.10.12 (Ubuntu), python-build-standalone 3.11.18 and 3.12.16 (§4). Not yet run in CI; not run on the user's Mac.
+**Verified for this version (0.3.9.dev0):** only on Linux aarch64 (container), CPython 3.10.12: full suite 301 passed / 6 skipped, and the real-PDF run of §0-P. Not run in CI, not run on the user's Mac, not run on Python 3.11–3.13 (the 3.11.18/3.12.16 results in §4 belong to 0.3.8.dev0).
 **CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
 
-**Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs (none in the repository); real DeepL calls; Preview/Acrobat interaction beyond opening.
+**Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs beyond the twelve pages of §0-P (none in the repository); DeepL beyond those two runs; Preview/Acrobat interaction beyond opening.
+
+## 0-P. First run on real PDFs with DeepL (2026-11-13, v0.3.9.dev0, engine patt-0.3-e4)
+
+**What was run.** Seven public documents were downloaded from their publishers (licence checked on the publisher's page): arXiv 2201.11903 and 2302.13971 (CC BY 4.0), PLOS ONE pone.0262897 (CC BY 4.0), NIST CSWP 29, USGS Fact Sheets 2016-3020 and 2023-3003, IRS Form W-9 (U.S. government works). Twelve pages were selected (page subsets, because there is no `--pages` option yet) and run through `plan → estimate → translate (DeepL free API) → render → report → compare` on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2, Tesseract present. 43,898 characters were billed in two runs (36,754 + 7,144 after the paragraph fix); the user set a cap of 50,000. The documents, outputs and the translation memory are local and are **not** in the repository; only two showcase images made from them are (`docs/showcase/`, sources in the README).
+
+**Result after the fixes below** (PATT's own QA): 3 pages `pass`, 2 `review`, 7 `fail`. Before the fixes: 2 of 7 files ended as `ERROR`, 1 page passed.
+
+| Finding on real documents | Cause | Change | Test |
+|---|---|---|---|
+| 2 of 7 files: `ERROR KeyError: 'nameddest'` | hyperref PDFs use named-destination links; the link rebuild copied a fixed key list without `nameddest` | key added; a link that cannot be re-created is reported as `link_lost` instead of aborting the file | synthetic PDF with a named link |
+| A map page lost every letter "a" ("P CIFIC OCE N", "Coll y mi") | `restore_keeps` searched the page for a displaced one-letter keep ("A"); `search_for` ignores case and matches inside words; every hit was redacted | displaced-copy removal only for keeps of 3+ characters and exact matches | `restore_keeps` on a page with "A" and "Banana Canal" |
+| Helvetica, Univers and Arial documents were set in a serif (Song) face | the PDF serif flag was set for all these fonts, and "Roman"/"Book" in a sans font name matched the serif hint | `keep.font_family`: sans name hints first, serif hints second, flag last | 12 font names |
+| Justified paragraphs were cut at every full stop that ended a line | grouping treated "line ends with a full stop, next starts with a capital" as a paragraph end | a full-width line followed by an un-indented line in the same block continues the paragraph | synthetic justified column; indented new paragraph still splits |
+| Table cells such as `13.0B` came back as `130亿` | only cells of at most 4 characters with one letter were kept | figures with a unit suffix of up to two letters are kept (ordinals excluded) | 11 kept cells, 7 translated strings |
+| Number check failed on correct translations (`540B` before a Chinese character, `2, 000`, `Coyle1,2,3`, `1,840多万`) | `\b` does not exist between a Latin letter and a CJK character; TeX thin space; reference marks; "多" between figure and scale | ASCII-only lookahead; normalisations | 6 accepted, 3 still rejected |
+
+**Real translation errors the number check caught** (kept as `fail`): DeepL rendered "8B, 62B, and 540B parameters" as "8 亿、62 亿和 540 亿"; a figure legend "LLaMA 65B" came back with "简体中文（大陆）" appended.
+
+**Seen and not fixed** (each is a design decision, listed in `docs/OPTIMIZATION_PLAN_zh-CN.md`): table header cells are merged into one line when the column gaps are narrow; labels drawn along curves (maps) are translated fragment by fragment and overlap; inline styles (link colour, italics, bold run-in headings) are lost; author names are translated; a paragraph that contains an inline link can be split at the link; "CSF Profiles" was translated as a medical term (no glossary or context was given); `plan` took 0.65 s per page (162 pages: 105 s) and `render` about 3 s per page without any progress output.
+
+**Not verified by this run:** macOS; scanned pages and OCR paths on real documents; documents longer than a few pages end to end; other DeepL plans; any language pair other than EN→ZH.
 
 ## 0-WIN. Windows: status and handover notes for the Windows collaborator
 

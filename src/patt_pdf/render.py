@@ -10,7 +10,7 @@ import numpy as np
 import pymupdf
 
 from .grouping import _rgb
-from .keep import BOLD_HINT, SERIF_HINT
+from .keep import BOLD_HINT, font_family
 from .ocr import render_rgb
 from . import decor
 from .fonts import font
@@ -248,7 +248,15 @@ def restore_keeps(pg, plan):
     # remove displaced copies: same text found elsewhere on the page, not overlapping any kept box
     keep_boxes = [r for _, r, _ in kp]
     for t, r, k in moved:
-        for hit in pg.search_for(str(k[4]).strip()):
+        want = str(k[4]).strip()
+        # search_for ignores case and matches inside words: for a one- or two-character keep
+        # ("A", "*") it would hit that letter in every word of the page and erase it there.
+        # Such keeps are only re-drawn at their own position; nothing else is touched.
+        if len(t) < 3:
+            continue
+        for hit in pg.search_for(want):
+            if re.sub(r"\s", "", pg.get_textbox(hit + (-0.5, -0.5, 0.5, 0.5))) != t:
+                continue                    # part of a longer word or different case: not a copy
             if not any(hit.intersects(kb) for kb in keep_boxes):
                 h = hit.height
                 pg.add_redact_annot(pymupdf.Rect(hit.x0 + 0.3, hit.y0 + 0.3 * h, hit.x1 - 0.3, hit.y1 - 0.3 * h), fill=False)
@@ -257,7 +265,7 @@ def restore_keeps(pg, plan):
         sp = spans.get(t)
         if not sp: rep.append({"issue": "keep_lost", "text": t[:30]}); continue
         for s_ in sp:
-            fam = "serif" if (s_["flags"] & 4 or SERIF_HINT.search(s_["font"])) else "sans"
+            fam = font_family(s_["font"], s_["flags"])
             bold = bool(s_["flags"] & 16) or bool(BOLD_HINT.search(s_["font"]))
             try:
                 fnt = pymupdf.Font("tiro" if fam == "serif" else "helv") if not re.search(r"[^\x00-\x7f]", s_["text"]) else font(fam, bold)

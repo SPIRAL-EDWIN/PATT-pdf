@@ -299,7 +299,9 @@ def crossings(units, vs):
 
 # ---------------------------------------------------------------- links
 
-_LINK_KEYS = ("kind", "uri", "page", "to", "file", "name", "zoom")
+# "nameddest" is how PyMuPDF reports named destinations (LaTeX/hyperref PDFs: citations,
+# footnotes, section references); without it insert_link raises KeyError for LINK_NAMED.
+_LINK_KEYS = ("kind", "uri", "page", "to", "file", "name", "nameddest", "zoom")
 
 
 def snapshot_links(pg):
@@ -347,7 +349,11 @@ def restore_links(pg, before, units):
     for l, new_r in plans:
         d = {k: l[k] for k in _LINK_KEYS if k in l and l[k] is not None}
         d["from"] = new_r
-        pg.insert_link(d)
+        try:
+            pg.insert_link(d)
+        except Exception as e:              # one unusual link must not abort the whole file
+            issues.append({"issue": "link_lost", "target": str(l.get("uri") or l.get("nameddest") or l.get("page")),
+                           "detail": f"could not be re-created ({type(e).__name__})"})
     # newly inserted links are only visible after the page is reloaded, so the target
     # comparison is done on the saved file (jobs._compare_links)
     return issues, notes

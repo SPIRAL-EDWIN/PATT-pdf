@@ -30,10 +30,34 @@ def is_keep(text):
         return True                       # URL fragment / file name (e.g. "?mod=article_inline")
     if KEEP_RE.match(t): return True
     if len(re.sub(r"[^A-Za-z]", "", t)) <= 1 and len(t) <= 4: return True   # "a)", "B", footnote marks
+    if NUM_UNIT_RE.match(t) and not ORDINAL_RE.search(t): return True      # "13.0B", "1.4T", "3.0e-4", "4M"
     return False
 
 
+# A table cell or label that is only a figure with a short unit suffix. Sending it to a
+# translator rewrites the figure ("13.0B" -> "130亿") and breaks the column; it is kept as is.
+NUM_UNIT_RE = re.compile(r"^[-+−–~≈<>≤≥]?\s?[$€£¥]?\d[\d.,]*(?:\s?[eE×x]\s?[-+−–]?\d+)?\s?[A-Za-z%°µ]{0,2}$")
+ORDINAL_RE = re.compile(r"\d(?:st|nd|rd|th)$", re.I)
+
+
 SERIF_HINT = re.compile(r"times|serif|georgia|garamond|minion|roman|cambria|book|palat|caslon|baskerv|utopia|cmr|nimbus ?rom|tiempos|publico|exchange|escrow", re.I)
+
+
+# Font names that are sans-serif although the PDF "serif" flag is set or the name contains a
+# serif hint ("HelveticaNeue-Roman", "Avenir-Book"). Checked BEFORE SERIF_HINT.
+SANS_HINT = re.compile(r"sans|helvet|arial|univers|calibri|gothic|grotes|frutiger|myriad|verdana|tahoma|segoe|roboto|"
+                       r"lato|futura|avenir|gill|cmss|inter\b|montserrat|ubuntu|fira|optima|trebuc|akzidenz|\bdin|"
+                       r"franklin|swiss|interstate|proxima|museo|nunito|poppins|raleway|oswald|candara|corbel|"
+                       r"courier|mono|consol|inconsolata|menlo|cmtt|typewriter|code", re.I)
+
+
+def font_family(name: str, flags: int = 0) -> str:
+    """'sans' or 'serif' for a PDF font. The name decides when it is recognisable; the PDF
+    serif flag (bit 4) is only a fallback, because many producers set it for every font
+    (Helvetica, Univers and Arial carried it in real documents)."""
+    if SANS_HINT.search(name or ""): return "sans"
+    if SERIF_HINT.search(name or ""): return "serif"
+    return "serif" if flags & 4 else "sans"
 
 
 BOLD_HINT = re.compile(r"bold|black|heavy|semibold|demi|-bd|,bd", re.I)
