@@ -6,10 +6,32 @@
 
 **The stage is NOT complete**, and completing it would not mean production readiness.
 
-**Verified for this version (0.4.0.dev0):** only on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2: full suite 447 passed / 5 skipped with the real-document cache present (432 passed / 20 skipped without it), and the DeepL re-run of §0-Q. Not run in CI, not run on macOS, not run on Python 3.11–3.13. ShellCheck was not available in this container; `install.sh` is unchanged since its last check.
+**Verified for this version (0.4.0.dev0):** only on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2: full suite 461 passed / 5 skipped with the real-document cache present, and the DeepL re-run of §0-Q. Commit `3f65b2a` was checked on the user's Mac (§0-R2: 25 of 26 checks passed); the changes made after it (curved-label fixes, installer) are verified on Linux only. Not run in CI, not run on Python 3.11 or 3.13.
 **CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
 
 **Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs beyond the twelve pages of §0-P (none in the repository); DeepL beyond those two runs; Preview/Acrobat interaction beyond opening.
+
+## 0-R2. macOS check of 3f65b2a and what changed after it (2026-11-13)
+
+**macOS run (Codex, the user's Mac: macOS 27.2.1, Apple M5 arm64, CPython 3.12.16, PyMuPDF 1.28.2, Tesseract 5.5.4).** 26 checks of `docs/testing/MACOS_V04_CHECK_PROMPT.md` on commit `3f65b2a`: 25 PASS, 1 FAIL. Full suite 434 passed / 18 skipped without the corpus cache; the 16 real-document tests passed after `corpus_fetch.py` (7 of 7 documents verified). `plan` of the 6-page USGS fact sheet: 32.3 s with one worker, 11.6 s with four, same plan. The report is private and not in the repository.
+
+| Finding | Cause | Change | Test |
+|---|---|---|---|
+| **C23 (FAIL):** on the map page "HUNTING CREEK" showed as "HUNTING CR" plus Chinese | the label follows a curve that passes through the vertical; its piece "EE" is a run at exactly 90°, was treated as a side label and translated | a run that continues a kept curved run is kept too, whatever its angle | synthetic curved label with a vertical piece |
+| Found while reproducing: "HAYWARD" translated, "FAULT" of the same label kept | "FAULT" was part of a curve, "HAYWARD" a straight run before it | the next word at the same angle is kept as well | synthetic two-word label |
+| Found while reproducing: the "r" of the curved "San Francisco Bay" vanished | the upright city label "Francisco" was translated; MuPDF removes a glyph when the redaction touches its upright bounding box, which is large for a slanted letter | slanted letters that are not being translated are remembered and redrawn at their origin and angle after the removal (`keep_restored`, review) | synthetic crossing; the real-document test checks every slanted letter |
+
+Engine `patt-0.4-e2`. After these fixes, on Linux: 450 passed / 5 skipped with the cache (461 / 5 with the installer tests added below). **The fixes above have not been run on macOS.**
+
+**Installer (`install.sh`), changed after the macOS run; verified on Linux only.**
+
+| Change | State |
+|---|---|
+| Five numbered steps with what is downloaded and about how much; pip without `--quiet`; `curl --progress-bar` | 22 tests; ShellCheck 0.10.0 clean; `bash -n` |
+| Download source: mirror in mainland China (Tsinghua TUNA) by default, announced, with the official sources as the other choice; `--mirror cn\|official`, `PATT_PDF_MIRROR`; fallback to official when the mirror does not answer; nothing written to pip or Homebrew configuration | tests with a fake `curl`/`uv` and a real pseudo-terminal for the question; a real run on Linux reached the mirror and resolved the packages |
+| `uv` is used when already installed (never installed by the script); `--no-uv`; pip when `--pip-arg` is given or uv fails | tests with a fake `uv`; one real run with uv 0.13.4 |
+| Messages in Chinese when the locale is Chinese | test |
+| **Not verified:** any of this on macOS; the Homebrew parts in particular (mirror environment for `brew`, installing Homebrew from the mirror, skipping fonts that are already installed) have never run. The size figures are from PyPI and Homebrew metadata of 2026-11-13, not from a measured install. No timing comparison of mirror vs. official or uv vs. pip was made from mainland China: the sandbox connection is not representative | |
 
 ## 0-Q. v0.4.0.dev0: one command, page selection, tables, unusable translations (2026-11-13)
 

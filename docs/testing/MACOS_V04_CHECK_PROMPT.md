@@ -181,3 +181,27 @@ C26 PASS/FAIL/SKIP  <说明>
 发现的问题（每条：现象、最小复现命令、实际输出、期望）：
 未能核查的项目及原因：
 ```
+
+---
+
+## 附：第二轮补充核查（针对 3f65b2a 之后的提交）
+
+上一轮在 `3f65b2a` 上的结果是 25 项 PASS、1 项 FAIL（C23）。之后有两个新提交：弯曲标注的修复，以及安装器的进度显示、镜像选择和 uv 支持。这两部分只在 Linux 上验证过。请在 Mac 上补做下面几项，规则与正文相同（不改源码、不提交、不调用付费翻译服务）。
+
+- **D1** 重跑 C1 和 C4，记录数字。Linux 上有语料缓存时是 461 passed / 5 skipped。
+- **D2** 重做 C23：同样的命令生成地图页，在“预览”里对照原页。期望 `HUNTING CREEK`、`HAYWARD FAULT`、`MAACAMA FAULT` 等沿断层线的标注完整保留英文；蓝色斜体 `San Francisco Bay` 每个字母都在；直的 `GREENVILLE FAULT`、`SAN GREGORIO FAULT`、`PAICINES FAULT` 被替换为斜向中文属于预期。
+- **D3** 安装器静态检查：`bash -n install.sh`；有 ShellCheck 时 `shellcheck -s bash install.sh`。
+- **D4** 安装器实跑（不装系统组件，装到临时目录，结束后卸载）。在**真实终端**里运行，看到“选择下载来源”的提问后直接回车：
+
+```bash
+W2="$(mktemp -d)"
+bash install.sh --source . --no-system --no-modify-path --prefix "$W2/p" --bin-dir "$W2/b"; echo "exit $?"
+"$W2/b/patt-pdf" --version
+bash install.sh --uninstall --prefix "$W2/p" --bin-dir "$W2/b"
+```
+
+  记录：是否出现提问及两个选项的文字；回车后是否显示“下载来源：镜像”；五个步骤的序号是否依次出现；第 3 步是否显示预计下载量和下载进度；用的是 uv 还是 pip；总耗时；退出码（系统组件齐全时期望 0）。
+- **D5** 同样的命令，提问时输入 `2`：应显示官方源，其余相同。记录耗时，与 D4 对比（这是镜像是否更快的唯一实测依据）。
+- **D6** `--mirror official` 和 `--mirror cn` 各跑一次：不应再出现提问。`--mirror fastest` 应以退出码 1 报错且不创建任何文件。
+- **D7** `--no-uv`：第 3 步应显示 pip 逐包下载的进度，没有长时间无输出的阶段。
+- **D8**（仅在你愿意改动本机 Homebrew 软件包时做，否则 SKIP）去掉 `--no-system` 完整跑一次：记录 Homebrew 是否从镜像下载（输出里的地址）、已装字体是否被跳过、Tesseract 是否正常安装。**如果本机没有 Homebrew，不要做这一项**：通过镜像新装的 Homebrew 会长期以镜像为更新来源，这个决定应由用户本人做。
