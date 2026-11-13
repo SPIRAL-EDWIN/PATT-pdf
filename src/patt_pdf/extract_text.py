@@ -182,4 +182,23 @@ def curved_labels(rotated, ends) -> set:
             (us, ue), (vs, ve) = ends[i], ends[j]
             if math.hypot(ue[0] - vs[0], ue[1] - vs[1]) < reach or math.hypot(ve[0] - us[0], ve[1] - us[1]) < reach:
                 out.add(i); break
+    # A curve can pass through the vertical or horizontal: that piece of the label is an
+    # axis-aligned run ("EE" of "HUNTING CREEK" at 90°). On its own it looks like a side
+    # label and would be translated in the middle of an English word. A run that directly
+    # continues a curved run belongs to the same label, whatever its own angle.
+    grew = True
+    while grew:
+        grew = False
+        for i, u in enumerate(rotated):
+            if i in out:
+                continue
+            for j in list(out):
+                v = rotated[j]
+                d = abs(u.angle - v.angle) % 360
+                # the next word of a label at the same angle sits a word space (and often a
+                # map symbol) further on: "HAYWARD" … "FAULT"
+                reach = (5.0 if min(d, 360 - d) < 3 else 3.0) * max(u.size, v.size)
+                (us, ue), (vs, ve) = ends[i], ends[j]
+                if math.hypot(ue[0] - vs[0], ue[1] - vs[1]) < reach or math.hypot(ve[0] - us[0], ve[1] - us[1]) < reach:
+                    out.add(i); grew = True; break
     return out

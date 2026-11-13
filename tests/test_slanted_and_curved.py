@@ -133,3 +133,82 @@ def test_vertical_side_labels_are_still_translated(tmp_path, fonts_ready):
     d.save(tmp_path / "in" / "v.pdf"); d.close()
     ws, qa, _ = _run(tmp_path, "v.pdf", {"Yearly totals": "年度合计", "Training loss": "训练损失"})
     assert abs(_line_angles(ws.out_path("v.pdf"))["训练损失"] - 90) < 1.0 and qa["status"] == "pass"
+
+
+def test_piece_of_a_curved_label_that_is_exactly_vertical_stays_too(tmp_path, fonts_ready):
+    """macOS check C23: "HUNTING CREEK" follows a curve that passes through the vertical. Its
+    piece "EE" is a run at 90 degrees; alone it looked like a side label, was translated, and
+    the map showed "HUNTING CR" followed by Chinese."""
+    (tmp_path / "in").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    pg.insert_text((40, 40), "Map of active faults", fontsize=12, fontname="helv")
+    f = pymupdf.Font("helv"); x, y = 120.0, 80.0
+    for piece, ang in (("HUNTIN", -56.0), ("GCR", -72.0), ("EE", -90.0), ("K", -104.0)):
+        _slanted(pg, (x, y), piece, ang, size=9)
+        adv = f.text_length(piece, fontsize=9) + 1.0
+        x += adv * math.cos(math.radians(ang)); y -= adv * math.sin(math.radians(ang))
+    _slanted(pg, (330, 250), "Elevation", 90, size=9)          # a real vertical axis label, far away
+    d.save(tmp_path / "in" / "creek.pdf"); d.close()
+    ws, qa, s = _run(tmp_path, "creek.pdf", {"Map of active faults": "活动断层图", "Elevation": "海拔", "EE": "译译", "K": "译"})
+    assert s["sent_chars"] == len("Map of active faults") + len("Elevation")
+    cur = [i for i in qa["pages"][0]["issues"] if i["issue"] == "curved_text_left_english"]
+    assert cur and cur[0]["count"] == 3, cur                      # "K" alone is a kept single letter anyway
+    ang = _line_angles(ws.out_path("creek.pdf"))
+    assert "EE" in ang and "译译" not in ang                       # the vertical piece is untouched
+    assert abs(ang["海拔"] - 90) < 1.0                              # the axis label is still translated
+
+
+def test_a_label_is_not_left_half_translated(tmp_path, fonts_ready):
+    """Seen on the same map: "HAYWARD" was translated while "FAULT", the next word of the same
+    label, was part of a curve and stayed English. A word that continues a kept run at the same
+    angle stays as well."""
+    (tmp_path / "in").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    pg.insert_text((40, 40), "Map of active faults", fontsize=12, fontname="helv")
+    f = pymupdf.Font("helv")
+    def along(x, y, ang, text, gap=0.0):
+        _slanted(pg, (x, y), text, ang, size=9)
+        adv = f.text_length(text, fontsize=9) + gap
+        return x + adv * math.cos(math.radians(ang)), y - adv * math.sin(math.radians(ang))
+    x, y = along(80, 90, -55, "HAYWARD", gap=30)            # a wide gap: a symbol sits between the words
+    x, y = along(x, y, -55, "FAULT", gap=2)
+    x, y = along(x, y, -63, "ZONE", gap=2)                   # the label bends here
+    d.save(tmp_path / "in" / "hay.pdf"); d.close()
+    ws, qa, s = _run(tmp_path, "hay.pdf", {"Map of active faults": "活动断层图", "HAYWARD": "海沃德", "FAULT": "断层", "ZONE": "带"})
+    assert s["sent_chars"] == len("Map of active faults")
+    with pymupdf.open(ws.out_path("hay.pdf")) as o:
+        text = o[0].get_text()
+    assert all(w in text for w in ("HAYWARD", "FAULT", "ZONE")) and "海沃德" not in text
+
+
+def test_translating_an_upright_label_does_not_erase_a_curved_letter_that_crosses_it(tmp_path, fonts_ready):
+    """Seen on the map: the city label "Francisco" was translated and the "r" of the curved
+    "San Francisco Bay", which runs across it, disappeared with it."""
+    (tmp_path / "in").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    pg.insert_text((100, 150), "Oakland", fontsize=11, fontname="helv")
+    f = pymupdf.Font("helv"); x, y, ang = 104.0, 128.0, -52.0           # a curve that crosses the label
+    for piece in ("Half", "Moon", "Bay"):
+        _slanted(pg, (x, y), piece, ang, size=9)
+        adv = f.text_length(piece + " ", fontsize=9)
+        x += adv * math.cos(math.radians(ang)); y -= adv * math.sin(math.radians(ang)); ang -= 8
+    d.save(tmp_path / "in" / "cross.pdf"); d.close()
+
+    def slanted_letters(path):
+        out = []
+        with pymupdf.open(path) as doc:
+            for b in doc[0].get_text("rawdict")["blocks"]:
+                for l in b.get("lines", []):
+                    if abs(l["dir"][1]) > 0.05:
+                        out += [(c["c"], round(c["origin"][0]), round(c["origin"][1])) for sp in l["spans"] for c in sp["chars"] if c["c"].strip()]
+        return sorted(out)
+    before = slanted_letters(tmp_path / "in" / "cross.pdf")
+    with pymupdf.open(tmp_path / "in" / "cross.pdf") as doc:
+        label = doc[0].search_for("Oakland")[0]
+        crossing = [c for b in doc[0].get_text("rawdict")["blocks"] for l in b.get("lines", []) if abs(l["dir"][1]) > 0.05
+                    for sp in l["spans"] for c in sp["chars"] if c["c"].strip() and pymupdf.Rect(c["bbox"]).intersects(label)]
+    assert crossing, "fixture: the curved text must cross the upright label"
+    ws, qa, _ = _run(tmp_path, "cross.pdf", {"Oakland": "奥克兰"})
+    assert slanted_letters(ws.out_path("cross.pdf")) == before
+    with pymupdf.open(ws.out_path("cross.pdf")) as o:
+        assert "奥克兰" in o[0].get_text() and "Oakland" not in o[0].get_text()

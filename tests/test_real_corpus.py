@@ -140,7 +140,20 @@ def test_map_labels_along_curves_stay_and_no_letter_is_erased(rendered):
     with pymupdf.open(r["src"]) as s, pymupdf.open(r["out"]) as o:
         before, after = s[0].get_text(), o[0].get_text()
     squeeze = lambda t: re.sub(r"\s+", "", t)
-    for word in ("CONCORDFAULT", "BERRYESSA", "SCREEKFAULT", "CAMAFAU", "HUNTIN"):      # labels along curves
+    # macOS check C23: "HUNTING CREEK" passes through the vertical; its piece "EE" was translated.
+    # Every slanted letter outside the few straight labels must still be at its place.
+    def slanted(pg):
+        return {(c["c"], round(c["origin"][0]), round(c["origin"][1])): c["bbox"]
+                for b in pg.get_text("rawdict")["blocks"] for l in b.get("lines", []) if abs(l["dir"][1]) > 0.05
+                for sp in l["spans"] for c in sp["chars"] if c["c"].strip()}
+    with pymupdf.open(r["src"]) as s, pymupdf.open(r["out"]) as o:
+        a, b = slanted(s[0]), slanted(o[0])
+    straight = [pymupdf.Rect(u.bbox) for u in r["plans"][0].units if u.angle]
+    assert 2 <= len({tuple(x) for x in straight}) <= 6                   # a handful of straight labels are translated
+    lost = [k for k in a if k not in b and not any(x.intersects(pymupdf.Rect(a[k])) for x in straight)]
+    assert lost == [], lost
+    assert cur[0]["count"] >= 43
+    for word in ("CONCORDFAULT", "BERRYESSA", "SCREEKFAULT", "CAMAFAU", "HUNTIN", "HAYWARD"):      # labels along curves
         assert word in squeeze(before) and squeeze(after).count(word) == squeeze(before).count(word), word
     # Latin words that stay on the page keep every letter (the 'a' of these was erased before)
     for word in ("Collayami", "Reliz"):

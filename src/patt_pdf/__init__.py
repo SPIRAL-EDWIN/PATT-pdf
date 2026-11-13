@@ -8,4 +8,4 @@ __version__ = "0.4.0.dev0"
 
 # Bump when page analysis / rendering behaviour changes: cached page plans and QA
 # results carry this tag and are recomputed when it differs.
-ENGINE_VERSION = "patt-0.4-e1"
+ENGINE_VERSION = "patt-0.4-e2"

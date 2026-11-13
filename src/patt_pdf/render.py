@@ -69,7 +69,68 @@ def screen_units(pg, units):
     return skipped
 
 
-def erase_units(pg, units, keeps=()):
+def _slanted_chars(pg, skip=()):
+    """Non-space characters of slanted lines, except those at the positions in `skip`."""
+    out = []
+    for b_ in pg.get_text("rawdict", flags=pymupdf.TEXT_MEDIABOX_CLIP)["blocks"]:
+        for l_ in b_.get("lines", []):
+            if abs(l_["dir"][1]) <= 0.05:
+                continue
+            for sp_ in l_["spans"]:
+                for c_ in sp_["chars"]:
+                    if not c_["c"].strip():
+                        continue
+                    cr = pymupdf.Rect(c_["bbox"])
+                    if any(abs(m.x0 - cr.x0) < 0.05 and abs(m.y0 - cr.y0) < 0.05 for m in skip):
+                        continue
+                    out.append(dict(c=c_["c"], origin=tuple(c_["origin"]), size=sp_["size"], font=sp_["font"],
+                                    flags=sp_["flags"], color=sp_["color"],
+                                    angle=math.degrees(math.atan2(-l_["dir"][1], l_["dir"][0]))))
+    return out
+
+
+def _page_font(pg, name):
+    """The font the page itself uses for `name`, if it can draw text by character code."""
+    for f in pg.get_fonts(full=True):
+        base = f[3].split("+")[-1]
+        if base == name or f[3] == name:
+            try:
+                buf = pg.parent.extract_font(f[0])[3]
+                if buf:
+                    return pymupdf.Font(fontbuffer=buf)
+            except Exception:
+                return None
+    return None
+
+
+def _restore_slanted(pg, guard):
+    """Redraw the remembered slanted letters that are no longer on the page, each at its own
+    origin and angle. The page's own font is used when it can draw the letter; otherwise a
+    base font of the same family. Returns the letters that were redrawn."""
+    key = lambda g: (g["c"], round(g["origin"][0], 1), round(g["origin"][1], 1))
+    have = {key(g) for g in _slanted_chars(pg)}
+    gone = [g for g in guard if key(g) not in have]
+    fonts = {}
+    for g in gone:
+        if g["font"] not in fonts:
+            fonts[g["font"]] = _page_font(pg, g["font"])
+        fnt = fonts[g["font"]]
+        if fnt is None or not fnt.has_glyph(ord(g["c"])):
+            serif = font_family(g["font"], g["flags"]) == "serif"
+            bold = bool(g["flags"] & 16) or bool(BOLD_HINT.search(g["font"])); ital = bool(g["flags"] & 2)
+            base = (("tibi" if ital else "tibo") if bold else ("tiit" if ital else "tiro")) if serif else \
+                   (("hebi" if ital else "hebo") if bold else ("heit" if ital else "helv"))
+            fnt = pymupdf.Font(base)
+            if not fnt.has_glyph(ord(g["c"])):
+                fnt = font("serif" if serif else "sans", bold)
+        tw = pymupdf.TextWriter(pg.rect, color=_rgb(g["color"]))
+        o = pymupdf.Point(g["origin"])
+        tw.append(o, g["c"], font=fnt, fontsize=g["size"])
+        tw.write_text(pg, morph=(o, pymupdf.Matrix(g["angle"])))
+    return gone
+
+
+def erase_units(pg, units, keeps=(), report=None):
     textr, vecr, patch = [], [], []
     conflicts = []
     keep_rects = [pymupdf.Rect(k[:4]) for k in keeps]
@@ -96,6 +157,14 @@ def erase_units(pg, units, keeps=()):
         else:
             for l in u.lines: patch.append(pymupdf.Rect(l[:4]) + (-0.8, -0.8, 0.8, 0.8))
     if textr:
+        # Slanted text that stays on the page (curved map labels) often runs across upright
+        # labels. MuPDF removes a glyph when the redaction touches its upright bounding box,
+        # and that box is large for a slanted letter: removing "Francisco" also removed the
+        # "r" of the curved "San Francisco Bay". Such letters are remembered here and put
+        # back after the removal (_restore_slanted).
+        mine = [pymupdf.Rect(e) for u in units if u.tgt for e in u.erase]
+        guard = _slanted_chars(pg, skip=mine)
+
         def strip(r, f):
             if f == "pt": return r
             if f == 0.5:
@@ -163,6 +232,11 @@ def erase_units(pg, units, keeps=()):
         pg.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
                             graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
                             text=pymupdf.PDF_REDACT_TEXT_REMOVE)
+        if guard:
+            back = _restore_slanted(pg, guard)
+            if back and report is not None:
+                report.append({"issue": "keep_restored", "text": "".join(g["c"] for g in back)[:30],
+                               "detail": f"{len(back)} slanted letter(s) crossed by translated text were redrawn"})
         if dup_boxes:
             seen = set()
             for lr in dup_boxes:
@@ -360,10 +434,11 @@ def apply_plan(pg, plan):
     vrules = decor.vertical_rules(pg)
     rep_d, decos = decor.flag_unhandled(pg, plan.units, decos)
     rep_d += decor.markup_annotations(pg, plan.units) + decor.image_underlines(pg, plan.units)
-    noisy = erase_units(pg, plan.units, plan.keeps)
+    restored = []
+    noisy = erase_units(pg, plan.units, plan.keeps, report=restored)
     removed = decor.remove(pg, decos)
     not_removed = [d for d in decos if d not in removed]
-    rep = skipped + draw_units(pg, [u for u in plan.units if u.kind != "keep"], plan.keeps)
+    rep = skipped + restored + draw_units(pg, [u for u in plan.units if u.kind != "keep"], plan.keeps)
     rep += restore_keeps(pg, plan)
     iss, specs = decor.redraw(pg, plan.units, removed, not_removed)
     rep += rep_d + iss
