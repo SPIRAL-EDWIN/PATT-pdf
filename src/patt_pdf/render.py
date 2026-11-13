@@ -144,9 +144,17 @@ def erase_units(pg, units, keeps=()):
         if units_text:
             para_r = [pymupdf.Rect(u.bbox) + (-0.35 * u.size, -0.25 * u.size, 0.35 * u.size, 0.25 * u.size) for u in units_text]
             drs = [pymupdf.Rect(d_["rect"]) for d_ in pg.get_drawings()]
+            # same test as before, on arrays: maps carry tens of thousands of paths, and a
+            # Python loop over all of them for every paragraph took most of the render time
+            D = np.array([[r.x0, r.y0, r.x1, r.y1] for r in drs], dtype=float).reshape(-1, 4)
+            Dw, Dh = D[:, 2] - D[:, 0], D[:, 3] - D[:, 1]
+            Dok = (Dw > 0) & (Dh > 0)
+            Darea = np.maximum(Dw * Dh, 0.01)
             for pr, u in zip(para_r, units_text):
-                inside = [rr for rr in drs if not rr.is_empty and rr.width < 2.5 * u.size and rr.height < 2.5 * u.size
-                          and (rr & pr).get_area() > 0.6 * max(rr.get_area(), 0.01)]
+                iw = np.minimum(D[:, 2], pr.x1) - np.maximum(D[:, 0], pr.x0)
+                ih = np.minimum(D[:, 3], pr.y1) - np.maximum(D[:, 1], pr.y0)
+                hit = Dok & (Dw < 2.5 * u.size) & (Dh < 2.5 * u.size) & (iw > 0) & (ih > 0) & (iw * ih > 0.6 * Darea)
+                inside = [drs[i] for i in np.flatnonzero(hit)]
                 if len(inside) >= max(3, len(re.sub(r"\s", "", u.src)) // 3):   # glyph-like cluster
                     box = pymupdf.Rect(pr)
                     for rr in inside: box |= rr
@@ -167,10 +175,10 @@ def erase_units(pg, units, keeps=()):
                                 text=pymupdf.PDF_REDACT_TEXT_NONE)
             # outlines that are sub-paths of a larger compound path can't be removed one by one:
             # paint them out with the local (flat) background, only if the background really is flat
+            left = [pymupdf.Rect(d_["rect"]) for d_ in pg.get_drawings()]     # once, after the removal
+            left = [r for r in left if not r.is_empty and r.width < 40]
             for lr in dup_boxes:
-                rest = [pymupdf.Rect(d_["rect"]) for d_ in pg.get_drawings()
-                        if not pymupdf.Rect(d_["rect"]).is_empty and pymupdf.Rect(d_["rect"]).width < 40
-                        and (pymupdf.Rect(d_["rect"]) & lr).get_area() > 0.6 * max(pymupdf.Rect(d_["rect"]).get_area(), 0.01)]
+                rest = [r for r in left if r.intersects(lr) and (r & lr).get_area() > 0.6 * max(r.get_area(), 0.01)]
                 if not rest: continue
                 box = pymupdf.Rect(rest[0])
                 for rr in rest[1:]: box |= rr

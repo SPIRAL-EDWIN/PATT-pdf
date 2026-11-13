@@ -95,6 +95,9 @@ def compare(ws: Workspace, rel: str, pages: list[int] | None, outdir: str, dpi: 
     if not ws.out_path(rel).exists():
         return []
     with pymupdf.open(ws.path(rel)) as s, pymupdf.open(ws.out_path(rel)) as o:
+        if pages is None and ws.qa_path(rel).exists():     # default: the pages that were rendered
+            qa = json.loads(ws.qa_path(rel).read_text(encoding="utf-8"))
+            pages = [p["page"] for p in qa.get("pages", []) if p.get("page")] or None
         for pno in (pages or range(1, s.page_count + 1)):
             a = s[pno - 1].get_pixmap(dpi=dpi); b = o[pno - 1].get_pixmap(dpi=dpi)
             A = Image.frombytes("RGB", (a.w, a.h), a.samples); B = Image.frombytes("RGB", (b.w, b.h), b.samples)

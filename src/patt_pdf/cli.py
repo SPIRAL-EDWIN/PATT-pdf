@@ -42,6 +42,34 @@ def _files(ws, a):
     return fs
 
 
+def _pages(ws, a, files):
+    """0-based page indexes selected by --pages, or None. The selection belongs to one
+    document, so it needs exactly one input file."""
+    spec = getattr(a, "pages", None)
+    if not spec:
+        return None
+    from .pages import PageSelectionError, parse, resolve
+    try:
+        parse(spec)
+        if len(files) != 1:
+            raise PageSelectionError(f"--pages applies to one document, but {len(files)} PDF files are selected; "
+                                     "name the file or narrow the folder with --files")
+        import pymupdf
+        try:
+            with pymupdf.open(ws.path(files[0])) as d:
+                n = d.page_count
+        except Exception:
+            return None                    # unreadable input: reported by the command itself
+        return resolve(spec, n)
+    except PageSelectionError as e:
+        raise SystemExit(f"error: {e}") from None
+
+
+def _progress(a):
+    from .progress import Progress
+    return Progress(quiet=bool(getattr(a, "quiet", False)))
+
+
 def _ns(a):
     from .backends import PUBLISHABLE, namespace_for
     return namespace_for(a.backend, manual_tm=getattr(a, "manual_tm", None), glossary=getattr(a, "glossary", None)), \
@@ -50,10 +78,14 @@ def _ns(a):
 
 def cmd_plan(a):
     from .jobs import plan_file
+    from .jobs import default_workers
     ws = _ws(a); deadline = time.time() + a.time_budget if a.time_budget else None
     worst = EXIT_OK
-    for rel in _files(ws, a):
-        st = plan_file(ws, rel, ocr=not a.no_ocr, deadline=deadline)
+    files = _files(ws, a); pages = _pages(ws, a, files); prog = _progress(a)
+    workers = a.workers if a.workers else default_workers()
+    for rel in files:
+        st = plan_file(ws, rel, ocr=not a.no_ocr, deadline=deadline, pages=pages, workers=workers, progress=prog)
+        prog.clear()
         extra = st.get("error") or (f"page errors: {st['page_errors']} (retried on next run)" if st.get("page_errors") else "")
         if st.get("reused_pages"):
             extra = (extra + " " if extra else "") + f"(reused {st['reused_pages']} pages from an earlier interrupted run)"
@@ -69,7 +101,8 @@ def cmd_plan(a):
 
 def cmd_estimate(a):
     from .jobs import estimate
-    ws = _ws(a); ns, _ = _ns(a); e = estimate(ws, _files(ws, a), ns)
+    ws = _ws(a); ns, _ = _ns(a); files = _files(ws, a)
+    e = estimate(ws, files, ns, pages=_pages(ws, a, files))
     for rel, c in e["per_file"].items():
         print(f"{c:>9}  {rel}")
     for rel, why in e["problems"].items():
@@ -100,8 +133,9 @@ def cmd_translate(a):
     if a.backend == "deepl" and a.glossary:
         # local only; the glossary is created in the DeepL account after the budget checks
         be.set_glossary(Path(a.glossary), ws.state / "deepl_glossary.json")
-    s = translate(ws, _files(ws, a), be, max_chars=a.max_chars, workers=a.workers,
-                  time_budget_s=a.time_budget or None)
+    files = _files(ws, a)
+    s = translate(ws, files, be, max_chars=a.max_chars, workers=a.workers,
+                  time_budget_s=a.time_budget or None, pages=_pages(ws, a, files))
     print(json.dumps(s, ensure_ascii=False, indent=1))
     return {"complete": EXIT_OK, "partial": EXIT_INCOMPLETE, "refused": EXIT_INCOMPLETE}.get(s["outcome"], EXIT_ERROR) \
         if not (s["outcome"] == "refused" and s["stopped"] and s["stopped"].startswith("plans missing")) else EXIT_ERROR
@@ -121,8 +155,10 @@ def cmd_render(a):
     from .jobs import render_file
     ws = _ws(a); ns, publishable = _ns(a)
     statuses = []
-    for rel in _files(ws, a):
-        qa = render_file(ws, rel, ns, publishable=publishable, ocr_qa=not a.no_ocr_qa)
+    files = _files(ws, a); pages = _pages(ws, a, files); prog = _progress(a)
+    for rel in files:
+        qa = render_file(ws, rel, ns, publishable=publishable, ocr_qa=not a.no_ocr_qa, pages=pages, progress=prog)
+        prog.clear()
         st = qa.get("status", "error")
         flagged = [f"p{p.get('page', '?')}:{p.get('status', 'error')}" for p in qa.get("pages", [])
                    if p.get("status") != "pass"]
@@ -152,9 +188,10 @@ def cmd_report(a):
 def cmd_compare(a):
     from .report import compare
     ws = _ws(a)
-    pages = [int(x) for x in a.pages.split(",")] if a.pages else None
+    files = _files(ws, a); sel = _pages(ws, a, files)
+    pages = [i + 1 for i in sel] if sel is not None else None
     n = 0
-    for rel in _files(ws, a):
+    for rel in files:
         for p in compare(ws, rel, pages, a.out, dpi=a.dpi):
             print(p); n += 1
     return EXIT_OK if n else EXIT_INCOMPLETE
@@ -267,24 +304,36 @@ def build_parser():
             p.add_argument("--files", help="glob filter on relative paths, e.g. 'reports/2026/*'")
         return p
 
+    def pages(p):
+        p.add_argument("--pages", metavar="LIST",
+                       help="only these pages of one document: 7   7-9   7,9   1-3,7,10-  (1-based; "
+                            "other pages stay as they are)")
+        return p
+
+    def quiet(p):
+        p.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
+        return p
+
     def identity(p, required=True):
         p.add_argument("--backend", required=required, choices=["deepl", "manual", "pseudo"],
                        help="translation identity: which cached translations to use")
         p.add_argument("--manual-tm", help="JSON {source: translation} for the manual backend")
         p.add_argument("--glossary", help="TSV glossary (DeepL); part of the translation identity")
 
-    p = common(sub.add_parser("plan", help="analyse pages (no translation, no network)"))
+    p = quiet(pages(common(sub.add_parser("plan", help="analyse pages (no translation, no network)"))))
+    p.add_argument("--workers", type=int, default=0,
+                   help="processes for pages that need OCR (default: CPU count, at most 4; 1 = no extra processes)")
     p.add_argument("--no-ocr", action="store_true", help="do not OCR vector/scanned pages (they will FAIL QA)")
     p.add_argument("--time-budget", type=float, default=0, help="stop starting new pages after N seconds (resumable)")
     p.set_defaults(fn=cmd_plan)
 
-    p = common(sub.add_parser("estimate", help="characters still needing translation (deduplicated)"))
+    p = pages(common(sub.add_parser("estimate", help="characters still needing translation (deduplicated)")))
     identity(p); p.set_defaults(fn=cmd_estimate)
 
     p = sub.add_parser("usage", help="show DeepL account usage (needs key; no translation)")
     p.add_argument("--state", required=True); p.set_defaults(fn=cmd_usage)
 
-    p = common(sub.add_parser("translate", help="fill the translation memory"))
+    p = pages(common(sub.add_parser("translate", help="fill the translation memory")))
     identity(p)
     p.add_argument("--max-chars", type=int, required=True, help="hard budget for this run (characters submitted)")
     p.add_argument("--yes", action="store_true", help="confirm paid API calls")
@@ -292,15 +341,15 @@ def build_parser():
     p.add_argument("--time-budget", type=float, default=0)
     p.set_defaults(fn=cmd_translate)
 
-    p = common(sub.add_parser("render", help="write translated PDFs + QA into the state dir"))
+    p = quiet(pages(common(sub.add_parser("render", help="write translated PDFs + QA into the state dir"))))
     identity(p)
     p.add_argument("--no-ocr-qa", action="store_true", help="skip OCR residual check (pages become 'unverified')")
     p.set_defaults(fn=cmd_render)
 
     p = common(sub.add_parser("report", help="Markdown QA report")); p.add_argument("--out"); p.set_defaults(fn=cmd_report)
 
-    p = common(sub.add_parser("compare", help="original|output PNGs for visual review"))
-    p.add_argument("--out", required=True); p.add_argument("--pages"); p.add_argument("--dpi", type=int, default=80)
+    p = pages(common(sub.add_parser("compare", help="original|output PNGs for visual review")))
+    p.add_argument("--out", required=True); p.add_argument("--dpi", type=int, default=80)
     p.set_defaults(fn=cmd_compare)
 
     p = common(sub.add_parser("publish", help="copy rendered PDFs to a destination folder"))

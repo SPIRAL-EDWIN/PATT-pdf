@@ -40,6 +40,22 @@ def inspect_images(pg, ocr: bool) -> list[dict]:
     return out
 
 
+def page_needs_ocr(pg) -> bool:
+    """True when planning this page will call Tesseract (seconds, not milliseconds): pages
+    without a usable text layer and text pages that carry an image worth inspecting."""
+    kind = classify_page(pg)
+    if kind == "blank":
+        return False
+    if kind in ("vector", "raster", "vector_few"):
+        return True
+    area = pg.rect.width * pg.rect.height
+    for info in pg.get_image_info():
+        r = pymupdf.Rect(info["bbox"]) & pg.rect
+        if not r.is_empty and r.width * r.height >= IMAGE_MIN_FRACTION * area:
+            return True
+    return False
+
+
 def plan_page(pg, pno: int, ocr: bool = True) -> PagePlan:
     kind = classify_page(pg)
     if kind == "text":

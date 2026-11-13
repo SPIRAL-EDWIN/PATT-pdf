@@ -148,14 +148,12 @@ def residual_english_ocr(page, plan, tgts, dpi=200):
 
 
 # ------------------------------------------------------------------ kept regions
-def _crop(path, pno, rect, dpi):
-    with pymupdf.open(path) as d:                 # fresh handle per check (see module doc)
-        pg = d[pno]
-        r = pymupdf.Rect(rect) & pg.rect
-        if r.is_empty or r.width < 1 or r.height < 1:
-            return None
-        pm = pg.get_pixmap(dpi=dpi, clip=r, colorspace=pymupdf.csRGB, alpha=False)
-        return np.frombuffer(pm.samples, dtype=np.uint8).reshape(pm.h, pm.w, 3).astype(int).mean(axis=2)
+def _crop(pg, rect, dpi):
+    r = pymupdf.Rect(rect) & pg.rect
+    if r.is_empty or r.width < 1 or r.height < 1:
+        return None
+    pm = pg.get_pixmap(dpi=dpi, clip=r, colorspace=pymupdf.csRGB, alpha=False)
+    return np.frombuffer(pm.samples, dtype=np.uint8).reshape(pm.h, pm.w, 3).astype(int).mean(axis=2)
 
 
 def keep_integrity(src_path, out_path, pno, plan, dpi=110, threshold=0.15):
@@ -163,8 +161,14 @@ def keep_integrity(src_path, out_path, pno, plan, dpi=110, threshold=0.15):
     original ink pixels differ in the output — catches erased, shifted or over-printed
     digits, while new text merely passing through the box padding is tolerated."""
     bad = []
-    for k in plan.keeps:
-        a = _crop(src_path, pno, k[:4], dpi); b = _crop(out_path, pno, k[:4], dpi)
+    if not plan.keeps:
+        return bad
+    # Fresh handles for this check (see module doc): these pages are only ever rendered
+    # clipped, never in full. One pair of handles per page instead of one per kept item:
+    # a map page with 160 kept figures re-opened and re-parsed the PDF 320 times.
+    with pymupdf.open(src_path) as sd, pymupdf.open(out_path) as od:
+        crops = [(k, _crop(sd[pno], k[:4], dpi), _crop(od[pno], k[:4], dpi)) for k in plan.keeps]
+    for k, a, b in crops:
         if a is None or b is None:
             continue
         if a.shape != b.shape:

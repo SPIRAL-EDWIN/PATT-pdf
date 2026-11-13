@@ -210,7 +210,10 @@ def plan_state(ws: Workspace, rel: str, ocr: bool | None = None) -> tuple[str, s
     return "ok", ""
 
 
-def load_plan(ws: Workspace, rel: str, verify: bool = True) -> list[PagePlan]:
+def load_plan(ws: Workspace, rel: str, verify: bool = True, pages: list[int] | None = None) -> list[PagePlan]:
+    """Plans of the planned pages, in page order. `pages` (0-based) restricts the result to a
+    selection; a selected page that was never planned is an error (run `plan` for it).
+    Without `pages`, every planned page is returned: after `plan --pages 2-3` that is two."""
     if verify:
         state, why = plan_state(ws, rel)
         if state != "ok":
@@ -218,10 +221,25 @@ def load_plan(ws: Workspace, rel: str, verify: bool = True) -> list[PagePlan]:
     j = json.loads(ws.plan_path(rel).read_text(encoding="utf-8"))
     if verify:
         with pymupdf.open(ws.path(rel)) as d:
-            if d.page_count != len(j["pages"]):
-                raise StalePlan(f"{rel}: page count {d.page_count} ≠ planned {len(j['pages'])} — re-plan")
-    return [PagePlan(p["page"], p["kind"], [Unit(**u) for u in p["units"]], p["keeps"], p.get("notes", []))
-            for p in j["pages"]]
+            planned_for = j.get("doc_pages", len(j["pages"]))
+            if d.page_count != planned_for:
+                raise StalePlan(f"{rel}: page count {d.page_count} ≠ planned {planned_for} — re-plan")
+    out = [PagePlan(p["page"], p["kind"], [Unit(**u) for u in p["units"]], p["keeps"], p.get("notes", []))
+           for p in sorted(j["pages"], key=lambda p: p["page"])]
+    if pages is None and verify and len(out) < j.get("doc_pages", len(out)):
+        from .pages import label
+        raise StalePlan(f"{rel}: only page(s) {label(p.page for p in out)} of {j['doc_pages']} are planned — "
+                        "pass the same --pages, or run `patt-pdf plan` without --pages")
+    if pages is not None:
+        have = {p.page for p in out}
+        lack = [n + 1 for n in pages if n not in have]
+        if lack:
+            from .pages import label
+            raise StalePlan(f"{rel}: page(s) {label(n - 1 for n in lack)} not planned — run `patt-pdf plan` "
+                            "with the same --pages")
+        want = set(pages)
+        out = [p for p in out if p.page in want]
+    return out
 
 
 # ======================================================================== plan
@@ -252,17 +270,41 @@ def _plan_error(ws: Workspace, rel: str, msg: str) -> dict:
     return st
 
 
-def plan_file(ws: Workspace, rel: str, ocr: bool = True, deadline: float | None = None) -> dict:
+def _plan_page_job(path: str, pno: int, ocr: bool):
+    """Worker of the page pool (a separate process): plan one page of the file at `path`.
+    Returns the plan as a dict, or ("error", text) — exceptions do not cross the process
+    boundary reliably."""
+    from . import analyze
+    try:
+        with pymupdf.open(path) as d:
+            return asdict(analyze.plan_page(d[pno], pno, ocr))
+    except Exception as e:
+        return ("error", f"{type(e).__name__}: {e}")
+
+
+def default_workers() -> int:
+    return max(1, min(4, os.cpu_count() or 1))
+
+
+def plan_file(ws: Workspace, rel: str, ocr: bool = True, deadline: float | None = None,
+              pages: list[int] | None = None, workers: int = 1, progress=None) -> dict:
     """Plan one file with page-level checkpoints. Returns a status dict, never raises.
-    Pages whose planning raised are retried on the next call; good pages are reused."""
+    Pages whose planning raised are retried on the next call; good pages are reused.
+
+    `pages` (0-based) plans a selection only. The stored plan then lists every page planned
+    so far for this file version, so a later call with another selection adds to it.
+    `workers` > 1 analyses pages that need OCR in separate processes; the result is the
+    same as with one worker."""
     from . import analyze
     src = ws.path(rel); pp = ws.plan_path(rel)
     try:
         state, _ = plan_state(ws, rel, ocr)
         if state == "ok":
             j = json.loads(pp.read_text(encoding="utf-8"))
-            if not j.get("failed_pages"):
-                return {"rel": rel, "status": "cached", "pages": len(j["pages"])}
+            have = {p["page"] for p in j["pages"]}
+            want = set(pages) if pages is not None else set(range(j.get("doc_pages", len(j["pages"]))))
+            if not j.get("failed_pages") and want <= have:
+                return {"rel": rel, "status": "cached", "pages": len(want)}
         sha = sha1_file(src)
         doc = pymupdf.open(src)
         if doc.needs_pass:
@@ -275,43 +317,111 @@ def plan_file(ws: Workspace, rel: str, ocr: bool = True, deadline: float | None 
     except Exception as e:                                  # unreadable file: report, continue the batch
         return _plan_error(ws, rel, f"{type(e).__name__}: {e}"[:300])
     partd = Path(str(pp) + ".parts"); partd.mkdir(parents=True, exist_ok=True)
-    pages, failed, reused = [], [], 0
-    for pno in range(doc.page_count):
+    total_doc = doc.page_count
+    wanted = sorted(n for n in (pages if pages is not None else range(total_doc)) if 0 <= n < total_doc)
+    done: dict[int, dict] = {}
+    failed, reused = [], 0
+
+    def cached(pno):
         f = partd / f"{pno}.json"
-        if f.exists():
-            j = json.loads(f.read_text(encoding="utf-8"))
-            if (j.get("sha") == sha and j.get("engine") == ENGINE_VERSION and j.get("ocr") == ocr
-                    and j["plan"]["kind"] != "error"):
-                pages.append(j["plan"]); reused += 1; continue
-        if deadline and time.time() > deadline:
-            total = doc.page_count; doc.close()
-            return {"rel": rel, "status": "partial", "pages": len(pages), "total": total}
+        if not f.exists():
+            return None
         try:
-            pl = asdict(analyze.plan_page(doc[pno], pno, ocr))
-            if repaired:
-                pl["notes"].append({"source_repaired": True})
-        except Exception as e:
-            pl = asdict(PagePlan(pno, "error", [], [], [{"error": _no_paths(ws, f"{type(e).__name__}: {e}")[:300]}]))
+            j = json.loads(f.read_text(encoding="utf-8"))
+        except ValueError:
+            return None
+        if (j.get("sha") == sha and j.get("engine") == ENGINE_VERSION and j.get("ocr") == ocr
+                and j["plan"]["kind"] != "error"):
+            return j["plan"]
+        return None
+
+    def store(pno, pl):
+        if isinstance(pl, tuple):                           # ("error", text)
+            pl = asdict(PagePlan(pno, "error", [], [], [{"error": _no_paths(ws, pl[1])[:300]}]))
             failed.append(pno + 1)
+        elif repaired:
+            pl["notes"].append({"source_repaired": True})
         pl["notes"] = _scrub_notes(ws, pl.get("notes", []))       # OCR errors etc. may quote local paths
-        atomic_write_text(f, json.dumps({"sha": sha, "engine": ENGINE_VERSION, "ocr": ocr, "plan": pl}, ensure_ascii=False))
-        pages.append(pl)
+        atomic_write_text(partd / f"{pno}.json",
+                          json.dumps({"sha": sha, "engine": ENGINE_VERSION, "ocr": ocr, "plan": pl}, ensure_ascii=False))
+        done[pno] = pl
+        if progress:
+            progress.update("plan", rel, len(done), len(wanted))
+
+    todo = []
+    for pno in wanted:
+        pl = cached(pno)
+        if pl is not None:
+            done[pno] = pl; reused += 1
+        else:
+            todo.append(pno)
+    if progress:
+        progress.update("plan", rel, len(done), len(wanted))
+
+    def here(pno):
+        try:
+            return asdict(analyze.plan_page(doc[pno], pno, ocr))
+        except Exception as e:
+            return ("error", f"{type(e).__name__}: {e}")
+
+    # Pages with images or without a text layer wait for Tesseract (seconds per page); text
+    # pages take milliseconds. Only the slow ones are worth a process each.
+    slow = []
+    if workers > 1 and ocr and not deadline and len(todo) > 1:
+        slow = [pno for pno in todo if analyze.page_needs_ocr(doc[pno])]
+        if len(slow) < 2:
+            slow = []
+    if slow:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        ex = ProcessPoolExecutor(max_workers=min(workers, len(slow)),
+                                 mp_context=multiprocessing.get_context("spawn"))
+        try:
+            futs = {ex.submit(_plan_page_job, str(src), pno, ocr): pno for pno in slow}
+            for pno in todo:
+                if pno not in futs.values():
+                    store(pno, here(pno))
+            for f in as_completed(futs):
+                try:
+                    res = f.result()
+                except Exception as e:                      # a worker died: plan that page here
+                    res = here(futs[f]) if type(e).__name__ == "BrokenProcessPool" else ("error", f"{type(e).__name__}: {e}")
+                store(futs[f], res)
+        except BaseException:
+            ex.shutdown(wait=False, cancel_futures=True)
+            raise
+        ex.shutdown(wait=True)
+    else:
+        for pno in todo:
+            if deadline and time.time() > deadline:
+                doc.close()
+                return {"rel": rel, "status": "partial", "pages": len(done), "total": len(wanted)}
+            store(pno, here(pno))
     doc.close()
+    # every page planned so far for this file version belongs to the plan (earlier selections)
+    for f in partd.glob("*.json"):
+        if f.stem.isdigit() and int(f.stem) not in done and int(f.stem) < total_doc:
+            pl = cached(int(f.stem))
+            if pl is not None:
+                done[int(f.stem)] = pl
+    plist = [done[k] for k in sorted(done)]
     st_ = src.stat()
     atomic_write_text(pp, json.dumps({"sha": sha, "size": st_.st_size, "mtime_ns": st_.st_mtime_ns,
-                                      "engine": ENGINE_VERSION, "ocr": ocr, "rel": rel, "pages": pages,
-                                      "page_count": len(pages), "failed_pages": failed, "complete": True},
+                                      "engine": ENGINE_VERSION, "ocr": ocr, "rel": rel, "pages": plist,
+                                      "page_count": len(plist), "doc_pages": total_doc,
+                                      "failed_pages": sorted(failed), "complete": True},
                                      ensure_ascii=False))
     if ws.error_path(rel).exists():
         ws.error_path(rel).unlink()
-    st = {"rel": rel, "status": "planned", "pages": len(pages), "reused_pages": reused}
+    st = {"rel": rel, "status": "planned", "pages": len(wanted), "reused_pages": reused}
     if failed:
-        st["status"] = "planned_with_errors"; st["page_errors"] = failed
+        st["status"] = "planned_with_errors"; st["page_errors"] = sorted(failed)
     return st
 
 
 # ======================================================================== estimate
-def estimate(ws: Workspace, files: list[str], ns: str, tm: TranslationMemory | None = None) -> dict:
+def estimate(ws: Workspace, files: list[str], ns: str, tm: TranslationMemory | None = None,
+             pages: list[int] | None = None) -> dict:
     """Characters that still need translation in namespace `ns`, de-duplicated across files.
     DeepL bills source characters (including spaces) — this is what is counted."""
     tm = tm or ws.tm(); need: dict[str, None] = {}; per_file = {}; kinds: dict[str, int] = {}
@@ -322,7 +432,11 @@ def estimate(ws: Workspace, files: list[str], ns: str, tm: TranslationMemory | N
         if state != "ok":
             problems[rel] = f"{state}: {why}"; continue
         c = 0
-        for p in load_plan(ws, rel):
+        try:
+            plans = load_plan(ws, rel, pages=pages)
+        except StalePlan as e:
+            problems[rel] = f"missing: {e}"; continue
+        for p in plans:
             kinds[p.kind] = kinds.get(p.kind, 0) + 1
             for u in p.units:
                 if u.kind == "imgtext":
@@ -339,7 +453,7 @@ def estimate(ws: Workspace, files: list[str], ns: str, tm: TranslationMemory | N
 # ======================================================================== translate
 def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int, batch_chars: int = 6000,
               batch_items: int = 50, workers: int = 2, reserve: int = 20000, time_budget_s: float | None = None,
-              log=print) -> dict:
+              log=print, pages: list[int] | None = None) -> dict:
     """Translate missing segments of `files` with `backend` into its TM namespace.
 
     Budget: refuses to start when the estimate exceeds `max_chars`, or (billable backends)
@@ -357,7 +471,7 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
     cannot be cancelled; they are waited for and accounted for.
     """
     ns = backend.namespace
-    tm = ws.tm(); est = estimate(ws, files, ns, tm)
+    tm = ws.tm(); est = estimate(ws, files, ns, tm, pages=pages)
     summary = {"backend": backend.name, "namespace": ns, "estimate_chars": est["chars"], "segments": est["segments"],
                "cache_hits": est["cache_hits"], "max_chars": max_chars, "batches_total": 0, "batches_submitted": 0,
                "batches_completed": 0, "batches_failed": 0, "submitted_chars": 0, "translated_chars": 0,
@@ -463,7 +577,7 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
             summary["billed_delta"] = u["character_count"] - summary["usage_before"]["count"]
         except Exception as e:
             summary["usage_after_error"] = f"{type(e).__name__}"
-    summary["remaining_chars"] = estimate(ws, files, ns, ws.tm())["chars"]
+    summary["remaining_chars"] = estimate(ws, files, ns, ws.tm(), pages=pages)["chars"]
     if summary["remaining_chars"] == 0 and not summary["batches_failed"]:
         summary["outcome"] = "complete"
     elif summary["translated_chars"] > 0:
@@ -508,7 +622,8 @@ def _page_status(pq: dict, accepted: list[str]) -> str:
 NEVER_ACCEPTABLE = {"link_lost", "number_or_url", "keep_changed", "keep_lost", "page_error", "not_publishable_backend", "untranslated"}
 
 
-def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_qa: bool = True) -> dict:
+def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_qa: bool = True,
+                pages: list[int] | None = None, progress=None) -> dict:
     """Render one file to state/out/<rel> with translations from TM namespace `ns`, and
     write state/qa/<rel>.json. Never raises. `publishable=False` (pseudo) forces FAIL."""
     from . import fonts as F
@@ -522,7 +637,7 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
         if state != "ok":
             raise StalePlan(f"{state}: {why}")
         src_sha = sha1_file(src)
-        tm = ws.tm(); plans = load_plan(ws, rel)
+        tm = ws.tm(); plans = load_plan(ws, rel, pages=pages)
         origins: set[str] = set()
         for plan in plans:
             for u in plan.units:
@@ -534,7 +649,9 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
         tmp = None
         doc = pymupdf.open(src)
         try:
-            for plan in plans:
+            for n_, plan in enumerate(plans):
+                if progress:
+                    progress.update("render", rel, n_, len(plans))
                 pq = {"page": plan.page + 1, "kind": plan.kind, "units": len(plan.units), "issues": []}
                 missing = 0
                 for u in plan.units:
@@ -589,7 +706,9 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
         replace_file(tmp, out_path)
         # post-render checks on the saved file (fresh handles)
         _compare_links(src, out_path, plans, qa["pages"])
-        for plan, pq in zip(plans, qa["pages"]):
+        for n_, (plan, pq) in enumerate(zip(plans, qa["pages"])):
+            if progress:
+                progress.update("render", rel, n_, len(plans), "checks")
             if plan.kind not in ("error", "blank", "graphics"):
                 pq["keep_changed"] = keep_integrity(src, out_path, plan.page, plan)
                 if pq["keep_changed"]:
