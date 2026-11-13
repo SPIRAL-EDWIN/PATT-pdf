@@ -28,6 +28,8 @@ tests/fixtures/out/
 !docs/img/*.svg
 # synthetic, regenerable sample produced from tests/fixtures (no third-party content)
 !docs/sample/compare_synthetic.jpg
+# showcase images made by tools/diagonal_compare.py from licence-clear documents (README lists sources)
+!docs/showcase/*.jpg
 # project logo preview (hand-made vector logo rendered once; brand/_archive_concepts stays local)
 !brand/logo-preview.png
 
