@@ -232,7 +232,10 @@ def draw_units(pg, units, keeps=()):
         col = tuple(max(0.0, min(1.0, c)) for c in u.color)
         tw = tws.setdefault(col, pymupdf.TextWriter(pg.rect, color=col))
         # first baseline: original first baseline if the size is unchanged, else top-aligned
-        base0 = u.lines[0][4] if abs(s - u.size) < 0.01 else box[1] + fnt.ascender * s * 0.98
+        # a single line that stays a single line keeps its baseline even when it was shrunk:
+        # it usually sits in a row (table header, labels) and must line up with its neighbours
+        one_line = len(u.lines) == 1 and len(ls) == 1
+        base0 = u.lines[0][4] if (abs(s - u.size) < 0.01 or one_line) else box[1] + fnt.ascender * s * 0.98
         u._drawn = []                                   # (x, text, baseline, size) per drawn line
         for i, ln in enumerate(ls):
             x = box[0]

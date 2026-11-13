@@ -145,3 +145,27 @@ def test_a_wide_translation_stops_short_of_the_next_cell(fonts_ready):
         F._ACTIVE.reset(token)
     assert ok and len(lines) == 1
     assert 100 + width <= nxt[0] - 0.3 * u.size, (width, size)        # a visible gap stays
+
+
+def test_a_shrunk_single_line_keeps_the_baseline_of_its_row(tmp_path, fonts_ready):
+    """Real case: the one header cell that had to shrink sat lower than the other cells."""
+    from patt_pdf.backends import ManualBackend
+    from patt_pdf.jobs import Workspace, plan_file, render_file, translate
+    (tmp_path / "in").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=200)
+    for x, t in ((60, "rate"), (130, "size"), (200, "count")):       # far apart: three separate cells
+        pg.insert_text((x, 100), t, fontsize=11, fontname="helv")
+    d.save(tmp_path / "in" / "row.pdf"); d.close()
+    f = tmp_path / "tm.json"
+    f.write_text(json.dumps({"rate": "率", "size": "每批处理样本数量", "count": "数"}, ensure_ascii=False), encoding="utf-8")
+    ws = Workspace(tmp_path / "in", tmp_path / "state"); plan_file(ws, "row.pdf", ocr=False)
+    m = ManualBackend(f); translate(ws, ["row.pdf"], m, max_chars=999)
+    qa = render_file(ws, "row.pdf", m.namespace, ocr_qa=False)
+    assert any(i["issue"] in ("shrunk", "overflow") for i in qa["pages"][0]["issues"]), qa["pages"][0]["issues"]
+    with pymupdf.open(ws.out_path("row.pdf")) as o:
+        lines = [(sp["bbox"][0], sp["origin"][1], sp["size"])            # one span per cell
+                 for b in o[0].get_text("dict")["blocks"] for l in b.get("lines", []) for sp in l["spans"] if sp["text"].strip()]
+    lines.sort()
+    assert len(lines) == 3
+    assert lines[1][2] < 0.8 * lines[0][2]                               # the middle cell was shrunk
+    assert all(abs(y - lines[0][1]) < 0.2 for _, y, _ in lines), lines    # and still sits on the row's baseline
