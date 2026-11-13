@@ -26,12 +26,12 @@ def _text() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
 
-def _run(*args, home: Path, env_extra: dict | None = None, stdin=subprocess.DEVNULL):
+def _run(*args, home: Path, env_extra: dict | None = None, stdin=subprocess.DEVNULL, bash=None, script=None):
     env = {k: v for k, v in os.environ.items() if k not in ("XDG_DATA_HOME", "SHELL", "PATT_PDF_LANG", "LC_ALL", "LC_MESSAGES")}
     # official sources by default: the mirror choice probes the mirror, and these tests are offline
     env.update({"HOME": str(home), "PATT_PDF_MIRROR": "official", "LANG": "C.UTF-8", **(env_extra or {})})
     env = {k: v for k, v in env.items() if v is not None}
-    r = subprocess.run([BASH, str(SCRIPT), *map(str, args)], capture_output=True, text=True,
+    r = subprocess.run([bash or BASH, str(script or SCRIPT), *map(str, args)], capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=env, stdin=stdin, timeout=600)
     return r.returncode, r.stdout + r.stderr
 
@@ -189,7 +189,7 @@ def test_real_offline_install_plumbing(tmp_path):
                    "--prefix", prefix, "--bin-dir", bindir,
                    "--pip-arg=--no-index", f"--pip-arg=--find-links={os.path.dirname(whl)}", "--pip-arg=--no-deps",
                    home=home)
-    assert "Linking the command" in out, out[-3000:]
+    assert "Step 4/5: link the command" in out, out[-3000:]
     link = bindir / "patt-pdf"
     assert link.is_symlink() and os.path.realpath(link).startswith(str(prefix.resolve()))
     assert (prefix / ".installed-by-patt-pdf-install-sh").exists()
@@ -271,10 +271,11 @@ def _tools(tmp_path, uv=True, curl=True):
     return {"PATH": path, "UV_LOG": str(tmp_path / "uv.log")}
 
 
-def _install(tmp_path, *extra, env=None, name="p"):
+def _install(tmp_path, *extra, env=None, name="p", bash=None, script=None):
     home = tmp_path / "home"; home.mkdir(exist_ok=True)
     return _run("--source", ROOT, "--no-system", "--no-modify-path", "--python", sys.executable,
-                "--prefix", tmp_path / name, "--bin-dir", tmp_path / (name + "-bin"), *extra, home=home, env_extra=env)
+                "--prefix", tmp_path / name, "--bin-dir", tmp_path / (name + "-bin"), *extra, home=home, env_extra=env,
+                bash=bash, script=script)
 
 
 def _log(tmp_path):
@@ -393,3 +394,116 @@ def test_question_on_a_terminal_enter_keeps_the_mirror_two_switches(tmp_path, an
         assert "download source: MIRROR" in out and "INDEX https://pypi.tuna.tsinghua.edu.cn/simple" in log
     else:
         assert "download source: OFFICIAL" in out and "INDEX none" in log and "CURL" not in log
+
+
+# ------------------------------------------------------------------ bash 3.2 and locales (macOS finding)
+def _bashes():
+    """Every bash to test with: the default one, /bin/bash (3.2 on macOS) and PATT_TEST_BASH32."""
+    out = []
+    for b in (BASH, "/bin/bash", os.environ.get("PATT_TEST_BASH32")):
+        if b and os.path.exists(b) and os.path.realpath(b) not in [os.path.realpath(x) for x in out]:
+            out.append(b)
+    return out
+
+
+def test_variables_next_to_non_ascii_text_use_braces():
+    """macOS run of 9cd953e: `install.sh: line 372: SOURCE\\xef: unbound variable`. Bash took the
+    first byte of a full-width bracket as part of the variable name in "$SOURCE（不下载）". Where
+    non-ASCII text follows a variable, the name must be delimited: ${SOURCE}（不下载）."""
+    bad = [f"{n}: {l.strip()[:90]}" for n, l in enumerate(_text().splitlines(), 1)
+           if not l.lstrip().startswith("#") and re.search(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]", l)]
+    assert bad == [], bad
+
+
+def test_exit_status_is_kept_by_the_exit_trap():
+    t = _text()
+    assert "trap on_exit EXIT" in t and "trap cleanup EXIT" not in t
+    body = t[t.index("on_exit() {"):t.index("# ------------------------------------------------------------------ main")]
+    assert "local rc=$?" in body and 'exit "$rc"' in body and '"$FINISHED" != 1' in body
+    # FINISHED is set only at the three places where the script ends on purpose
+    assert t.count("FINISHED=1") == 3 and t.count("FINISHED=0") == 1
+
+
+@needs_bash
+@pytest.mark.parametrize("lang", ["zh_CN.UTF-8", "en_US.UTF-8"])
+@pytest.mark.parametrize("locale", ["C.UTF-8", "C", "POSIX", "en_US.UTF-8", "zh_CN.UTF-8", "no_SUCH.locale"])
+def test_every_step_runs_in_any_locale_and_with_any_bash(tmp_path, locale, lang):
+    """The whole script, all five steps, with each available bash (on macOS that includes the
+    system bash 3.2) and with locales that exist here and ones that do not. Both message
+    languages are evaluated either way: the Chinese strings are arguments of every step."""
+    for n, bash in enumerate(_bashes()):
+        env = dict(_tools(tmp_path), LC_ALL=locale, LANG=locale, PATT_PDF_LANG=lang)
+        rc, out = _install(tmp_path, env=env, name=f"b{n}", bash=bash)
+        assert "unbound variable" not in out, (bash, out[-800:])
+        assert rc == 0, (bash, locale, out[-1200:])
+        marks = ["第 %d/5 步" % i for i in range(1, 6)] if lang.startswith("zh") else ["Step %d/5:" % i for i in range(1, 6)]
+        for m in marks:
+            assert m in out, (bash, m, out[-1200:])
+        assert (tmp_path / f"b{n}-bin" / "patt-pdf").is_symlink()
+        if lang.startswith("zh"):
+            assert "（不下载）" in out and "来自官方源（PyMuPDF" in out
+
+
+def _latin1_locale(tmp_path):
+    """Environment for a locale in which bytes above 0x7f are letters, or None. macOS has
+    en_US.ISO8859-1 built in; on Linux one is compiled into a temporary folder."""
+    if sys.platform == "darwin":
+        return {"LC_ALL": "en_US.ISO8859-1", "LANG": "en_US.ISO8859-1"}
+    localedef = shutil.which("localedef")
+    if not localedef:
+        return None
+    d = tmp_path / "locales"; d.mkdir(exist_ok=True)
+    subprocess.run([localedef, "-i", "en_US", "-f", "ISO-8859-1", str(d / "en_US.ISO-8859-1")], capture_output=True)
+    if not (d / "en_US.ISO-8859-1").exists():
+        return None
+    return {"LOCPATH": str(d), "LC_ALL": "en_US.ISO-8859-1", "LANG": "en_US.ISO-8859-1"}
+
+
+@needs_bash
+def test_install_completes_where_high_bytes_count_as_letters(tmp_path):
+    """The condition of the macOS failure, reproduced: in such a locale bash reads the first
+    byte of a full-width bracket as part of the variable name before it."""
+    loc = _latin1_locale(tmp_path)
+    if loc is None:
+        pytest.skip("no Latin-1 locale here and no localedef to build one")
+    probe = subprocess.run([BASH, "-c", 'set -u; V=.; echo "$V\uff08"'], capture_output=True,
+                           env={**os.environ, **loc})
+    if probe.returncode == 0:
+        pytest.skip("this bash does not read high bytes as part of a name in the Latin-1 locale")
+    for n, bash in enumerate(_bashes()):
+        env = dict(_tools(tmp_path), PATT_PDF_LANG="zh_CN.UTF-8", **loc)
+        rc, out = _install(tmp_path, env=env, name=f"l{n}", bash=bash)
+        assert "unbound variable" not in out and rc == 0, (bash, out[-900:])
+        assert (tmp_path / f"l{n}-bin" / "patt-pdf").is_symlink()
+
+
+@needs_bash
+def test_a_script_that_stops_early_never_reports_success(tmp_path):
+    """The same run also returned 0 although nothing was installed: bash 3.2 leaves with status
+    0 when an EXIT trap runs after an unbound-variable error. A copy of the script with such an
+    error must end non-zero, say that it stopped, and leave nothing behind, under every bash."""
+    broken = tmp_path / "install-broken.sh"
+    t = _text()
+    marker = '  SRC=""\n  fetch_source\n'
+    assert marker in t
+    broken.write_text(t.replace(marker, '  SRC=""\n  echo "$PATT_NO_SUCH_VARIABLE"\n  fetch_source\n'), encoding="utf-8")
+    for n, bash in enumerate(_bashes()):
+        rc, out = _install(tmp_path, env=_tools(tmp_path), name=f"e{n}", bash=bash, script=broken)
+        assert rc != 0, (bash, out[-600:])
+        assert "unbound variable" in out
+        assert not (tmp_path / f"e{n}-bin" / "patt-pdf").exists() and not (tmp_path / f"e{n}" / "venv").exists()
+        assert "Done." not in out
+
+
+@needs_bash
+def test_intended_exit_codes_are_unchanged(tmp_path):
+    """0 for --help and --uninstall, 1 for errors, and the doctor's own code at the end of an install."""
+    for bash in _bashes():
+        assert _run("--help", home=tmp_path, bash=bash)[0] == 0
+        assert _run("--uninstall", "--prefix", tmp_path / "nothing-here", home=tmp_path, bash=bash)[0] == 0
+        assert _run("--bogus", home=tmp_path, bash=bash)[0] == 1
+    tools = _tools(tmp_path)
+    uv = Path(tools["PATH"].split(os.pathsep)[0]) / "uv"                # stand-in command whose doctor says "incomplete"
+    uv.write_text(FAKE_UV.replace('echo "stand-in $*"', '[ "$1" = doctor ] && exit 2; echo "stand-in $*"'), encoding="utf-8")
+    rc, out = _install(tmp_path, env=tools, name="d")
+    assert rc == 2 and "reported problems above (exit 2)" in out, out[-600:]

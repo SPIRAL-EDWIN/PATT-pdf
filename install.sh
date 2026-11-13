@@ -66,6 +66,7 @@ MARKER=".installed-by-patt-pdf-install-sh"
 TMPDL=""
 INSTALL_LOCK=""
 REPLACE_VENV=0
+FINISHED=0                                   # set to 1 only where the script ends on purpose
 
 # ------------------------------------------------------------------ output helpers
 tilde() { local p="$1"; case "$p" in "$HOME"/*|"$HOME") printf '~%s' "${p#"$HOME"}" ;; *) printf '%s' "$p" ;; esac; }
@@ -76,6 +77,12 @@ die()  { printf '\nerror: %s\n' "$*" >&2; exit 1; }
 run()  { note "\$ $*"; "$@" </dev/null; }
 
 # Messages in Chinese when the locale is Chinese (PATT_PDF_LANG overrides), otherwise English.
+# In a string that contains non-ASCII text every variable is written ${name}. Bash asks the
+# C library which bytes are letters; where bytes above 0x7f count as letters, the first byte
+# of "（" is read as part of the name: "$SOURCE（" became the unset variable "SOURCE\xef" and
+# ended the install. Seen with bash 3.2 on macOS under LC_ALL=C.UTF-8 (not under LC_ALL=C)
+# and reproduced on Linux in a Latin-1 locale with bash 3.2 and 5.1.
+# tests/test_install_script.py checks both the rule and a real run in such a locale.
 ZH=0
 case "${PATT_PDF_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in zh*|ZH*) ZH=1 ;; esac
 L() { if [ "$ZH" = 1 ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
@@ -141,7 +148,7 @@ parse_args() {
       --no-modify-path) MODIFY_PATH=0; shift ;;
       --yes|-y)     ASSUME_YES=1; shift ;;
       --uninstall)  UNINSTALL=1; shift ;;
-      --help|-h)    usage; exit 0 ;;
+      --help|-h)    usage; FINISHED=1; exit 0 ;;
       *) die "unknown option: $1 (try --help)" ;;
     esac
   done
@@ -369,13 +376,13 @@ fetch_source() {                                # sets SRC to a directory or an 
     cp "$SOURCE/pyproject.toml" "$SOURCE/README.md" "$SOURCE/LICENSE" "$SRC/"
     cp -R "$SOURCE/src/patt_pdf" "$SRC/src/patt_pdf"
     find "$SRC" \( -name __pycache__ -o -name '*.egg-info' \) -prune -exec rm -rf {} +
-    step 2 "PATT-PDF source: local copy of $SOURCE (no download)" "PATT-PDF 源码：使用本地目录 $SOURCE（不下载）"
+    step 2 "PATT-PDF source: local copy of $SOURCE (no download)" "PATT-PDF 源码：使用本地目录 ${SOURCE}（不下载）"
     return 0
   fi
   command -v curl >/dev/null 2>&1 || die "curl is required to download PATT-PDF"
   SRC="$TMPDL/patt-pdf.tar.gz"
   local url="https://github.com/$PATT_REPO/archive/$REF.tar.gz"
-  step 2 "download PATT-PDF ($REF), about 2 MB, from GitHub" "从 GitHub 下载 PATT-PDF（$REF），约 2 MB"
+  step 2 "download PATT-PDF ($REF), about 2 MB, from GitHub" "从 GitHub 下载 PATT-PDF（${REF}），约 2 MB"
   note "$url"
   curl -fL --retry 3 --progress-bar -o "$SRC" "$url" </dev/null || die "download failed: $url"
 }
@@ -394,7 +401,7 @@ install_package() {
   local py="$1" venv="$PREFIX/venv" uv="" where
   if [ "$MIRROR" = cn ]; then where="$(L "mirror" "镜像")"; else where="$(L "official source" "官方源")"; fi
   step 3 "Python packages, about $(python_download_mb) MB from the $where (PyMuPDF, OpenCV, NumPy, fontTools)" \
-         "Python 包，约 $(python_download_mb) MB，来自$where（PyMuPDF、OpenCV、NumPy、fontTools）"
+         "Python 包，约 $(python_download_mb) MB，来自${where}（PyMuPDF、OpenCV、NumPy、fontTools）"
   note "$(L "virtual environment:" "虚拟环境：") $(tilde "$venv")"
   note "python: $py ($("$py" -c 'import platform; print(platform.python_version())'))"
   if [ -e "$venv" ] || [ -L "$venv" ]; then
@@ -532,16 +539,30 @@ cleanup() {
   if [ -n "$TMPDL" ]; then rm -rf "$TMPDL"; fi
 }
 
+# Bash 3.2 (macOS) leaves with status 0 when an EXIT trap runs after an "unbound variable"
+# error, so an install that stopped half-way looked successful. The trap therefore keeps the
+# real status, and an exit that did not come from the end of main() is never 0.
+# shellcheck disable=SC2317
+on_exit() {
+  local rc=$?
+  cleanup || true
+  if [ "$FINISHED" != 1 ] && [ "$rc" = 0 ]; then
+    printf '\nerror: the installer stopped before it finished (see the message above); nothing was installed\n' >&2
+    rc=1
+  fi
+  exit "$rc"
+}
+
 # ------------------------------------------------------------------ main
 main() {
+  trap on_exit EXIT
   parse_args "$@"
   detect_platform
-  trap cleanup EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   if [ "$UNINSTALL" = 1 ]; then
     if [ -d "$PREFIX" ]; then lock_prefix; fi
-    do_uninstall; exit 0
+    do_uninstall; FINISHED=1; exit 0
   fi
   check_command_path
 
@@ -585,6 +606,7 @@ main() {
   note "try:        patt-pdf --help"
   note "upgrade:    re-run this installer"
   note "uninstall:  re-run this installer with --uninstall"
+  FINISHED=1
   exit "$rc"
 }
 

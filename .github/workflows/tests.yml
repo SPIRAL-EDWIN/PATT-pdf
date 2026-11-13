@@ -165,6 +165,21 @@ jobs:
           "$RUNNER_TEMP/patt-pdf-bin/patt-pdf" --version
           bash install.sh --uninstall --prefix "$RUNNER_TEMP/patt-pdf-home" --bin-dir "$RUNNER_TEMP/patt-pdf-bin"
           test ! -e "$RUNNER_TEMP/patt-pdf-bin/patt-pdf"
+      # On a Mac (system bash 3.2, LC_ALL=C.UTF-8) the installer once stopped with "unbound
+      # variable" after step 1 and still returned 0. Run it with the system bash in that setting.
+      - name: One-line installer with the system bash 3.2 under LC_ALL=C.UTF-8 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          /bin/bash --version | head -1
+          rc=0
+          LC_ALL=C.UTF-8 PATT_PDF_LANG=zh_CN.UTF-8 /bin/bash install.sh --source . --no-system --no-modify-path \
+            --mirror official --python "$(command -v python)" \
+            --prefix "$RUNNER_TEMP/patt-pdf-home32" --bin-dir "$RUNNER_TEMP/patt-pdf-bin32" || rc=$?
+          expected=${{ matrix.ocr && '0' || '2' }}
+          echo "installer exit code: $rc (expected $expected)"
+          test "$rc" = "$expected"
+          "$RUNNER_TEMP/patt-pdf-bin32/patt-pdf" --version
+          /bin/bash install.sh --uninstall --prefix "$RUNNER_TEMP/patt-pdf-home32" --bin-dir "$RUNNER_TEMP/patt-pdf-bin32"
       - name: Install preflight (standard library only, started with -S; must report a healthy env)
         run: python -S tools/preflight.py
       - name: PowerShell retest wrapper self-test (Windows)
