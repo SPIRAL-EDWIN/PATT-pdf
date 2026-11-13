@@ -3,179 +3,105 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="brand/logo-horizontal-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="brand/logo-horizontal-light.svg">
-  <img alt="PATT-PDF logo" src="brand/logo-horizontal-light.svg" width="320">
+  <img alt="PATT-PDF logo" src="brand/logo-horizontal-light.svg" width="300">
 </picture>
 
-# PATT-PDF
+### Translate a PDF. Keep the page.
+
+PATT-PDF puts the Chinese translation where the English text was,<br>
+and leaves figures, tables, rules and numbers in place.
 
 [![Status: experimental](https://img.shields.io/badge/status-experimental-orange)](docs/STATUS.md)
 [![Python: ≥3.10](https://img.shields.io/badge/python-%E2%89%A53.10-blue)](pyproject.toml)
-[![PyMuPDF](https://img.shields.io/badge/PDF-PyMuPDF-blue)](https://pymupdf.readthedocs.io/)
-[![OCR: supported](https://img.shields.io/badge/OCR-supported-blue)](docs/REFERENCE.md#install)
-[![macOS: Homebrew](https://img.shields.io/badge/macOS-Homebrew-orange?logo=homebrew&logoColor=white)](#one-line-install-macos-and-linux)
+[![macOS: Homebrew](https://img.shields.io/badge/macOS-Homebrew-orange?logo=homebrew&logoColor=white)](docs/INSTALL.md)
+[![Linux](https://img.shields.io/badge/Linux-Debian%20%C2%B7%20Ubuntu-blue?logo=linux&logoColor=white)](docs/INSTALL.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-lightgrey)](LICENSE)
 
-**Position-Aware Translation Toolkit for PDF**
+**English** · [简体中文](README.zh-CN.md)
 
-Translate English PDFs into Simplified Chinese, with the translated text placed as close as possible to its original position.
-
-[English](README.md) · [简体中文](README.zh-CN.md)
-
-[Preview](#preview) · [Install](#install) · [Quick start](#quick-start) · [Documentation](#documentation)
+<img src="docs/showcase/hero.jpg" alt="Three real pages, each split diagonally: the English original on the upper left, the PATT-PDF output in Simplified Chinese on the lower right" width="100%">
 
 </div>
 
-> **Experimental · v0.3.8.dev0.** This is a command-line prototype, not a finished desktop app. Offline tests use synthetic PDFs. The installer has also been tested on Apple Silicon with system dependencies already present. See the platform status for CI coverage. macOS and Linux are maintained here; Windows is developed and tested separately by a Windows collaborator, and this version is **not verified on Windows**. Nothing has been verified on real-world PDFs or with a real DeepL request. Results can be incomplete or inaccurate: always review the output. See [platform status](docs/STATUS.md).
-
-## Preview
-
-<p align="center">
-  <img src="docs/sample/compare_synthetic.jpg" alt="Synthetic PDF pages shown side by side: English originals on the left, Simplified Chinese output on the right" width="800">
-</p>
-
-*Original on the left · translated output on the right. These are synthetic test pages using fixed translations, not a real-world or DeepL benchmark. The image combines several page types; it does not imply every page passes QA. See the [sample report](docs/sample/REPORT_SAMPLE.md).*
-
-## What PATT does
-
-- **Position-aware replacement:** extracts text and tries to place the translation in the original area while preserving surrounding graphics, numbers and other protected content.
-- **Reviewable workflow:** plans pages, estimates translation volume, renders output, and produces QA reports and side-by-side images.
-- **Choice of translation backend:** DeepL API, an offline manual translation memory, or a pseudo backend for layout testing. PATT is a workflow, not a translation model.
-- **Input protection:** keeps source files separate from working state and published output; publishing does not overwrite existing files.
-- **Experimental OCR:** handles some scanned and outlined-text pages with local Tesseract when needed. Images containing text are not translated.
-
-Currently only English → Simplified Chinese is supported. Complex layouts, tables, scans, formulas and other real documents may not be faithfully reproduced. There is no GUI, LLM backend, or Windows installer yet. See [capabilities and limitations](docs/REFERENCE.md#what-it-does-and-how-well).
+<sub>Real pages translated with DeepL, unedited. Upper left of each page: the original. Lower right: the PATT-PDF output. PATT's own checks rate the paper and the form `pass` and the map page `fail` (curved map labels are not handled yet). [Sources and licences](#sample-pages).</sub>
 
 ## Install
 
-PATT-PDF has one installation: the full one. There is no "basic" variant, because every part (OpenCV and Tesseract for OCR, the Noto CJK fonts, the Python package) may be needed by the next PDF. Python 3.10 or newer is required; 3.10–3.13 are the intended test range. OCR is invoked for scans, outlined text and image inspection when needed, rather than to extract ordinary text-layer content.
-
-### One-line install (macOS and Linux)
+macOS and Linux, one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh | bash
 ```
 
-The script prints each step before running it and ends with `patt-pdf doctor`, so you see at once whether the installation is complete. It does, in this order:
+The script prints each step before it runs, installs into its own folder and finishes with a self-check. On a Mac without Homebrew it asks before installing Homebrew. Details, manual steps and uninstall: [docs/INSTALL.md](docs/INSTALL.md).
 
-1. **System packages** — Noto Sans/Serif CJK SC fonts, Tesseract with English data, and a Python ≥ 3.10 if none is found. On macOS these come from **Homebrew**: if Homebrew is not installed, the script says so and asks for confirmation before running the official Homebrew installer (which needs an administrator password and installs the Xcode Command Line Tools). On Linux it uses `apt-get` (Debian/Ubuntu), `dnf` (Fedora/RHEL), `pacman` (Arch) or `zypper` (openSUSE) through `sudo`; you may be asked for your password.
-2. **PATT-PDF itself**, with OpenCV, PyMuPDF, NumPy and fontTools, into a private virtual environment at `~/.local/share/patt-pdf/venv`. Nothing is written into the system Python.
-3. **The command** `~/.local/bin/patt-pdf`; if that folder is not on your `PATH`, the script offers to add one line to your shell start-up file (or prints the line for you to add).
-4. `patt-pdf fonts` and `patt-pdf doctor`.
-
-Prefer to read before running? Download first, then run the same file:
+## Use
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh -o install.sh
-less install.sh
-bash install.sh            # options: --help, --ref v0.x.y, --no-system, --yes, --uninstall
-```
+export DEEPL_AUTH_KEY=...                                  # your own DeepL API key
 
-Re-running the script upgrades the installation; `bash install.sh --uninstall` (or `curl … | bash -s -- --uninstall`) removes the virtual environment and the command link, and leaves system packages, fonts and your data alone. `--no-system` skips step 1 if you prefer to install fonts, Tesseract and Python yourself; `--ref` installs a tag or commit instead of `main`. CI checks the install with system dependencies already set up. Fedora, Arch and openSUSE package installation has yet to be verified (see [platform status](docs/STATUS.md)). The script is not for Windows.
-
-### Manual install
-
-The same result, step by step. All systems use the same Python package; there are no downloadable OS-specific builds. Install Git and Python first. For the Chinese fonts below, install the Noto Sans CJK SC and Noto Serif CJK SC regular and bold faces; install Tesseract with English data as shown.
-
-<details>
-<summary><b>macOS</b></summary>
-
-Install the fonts with Homebrew, or obtain the static SC OTF files from [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases). Also install Tesseract for OCR.
-
-```bash
-brew install --cask font-noto-sans-cjk font-noto-serif-cjk
-# OCR engine and English language data:
-brew install tesseract
-
-git clone https://github.com/SPIRAL-EDWIN/PATT-pdf.git
-cd PATT-pdf
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install .
-patt-pdf fonts
-patt-pdf doctor
-```
-
-</details>
-
-<details>
-<summary><b>Windows</b></summary>
-
-> Windows is developed and tested by a Windows collaborator; this version has **not** been verified on Windows. The steps below are kept for reference.
-
-Install the static SC OTF fonts from [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases) for your user, or keep them in a folder and set `PATT_PDF_FONT_SOURCE`. Install the [Tesseract build](https://github.com/UB-Mannheim/tesseract/wiki) with English data as part of the standard setup. In PowerShell:
-
-```powershell
-git clone https://github.com/SPIRAL-EDWIN/PATT-pdf.git
-cd PATT-pdf
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install .
-patt-pdf fonts
-patt-pdf doctor
-```
-
-If the Python launcher is unavailable, use `python -m venv .venv`. Use a short path such as `C:\patt` if Windows long paths are disabled; if `pip install` fails with a missing temporary file or "file already exists", `python tools\install_check.py --source . --work C:\pt` retries from a clean copy in a short new folder (it never deletes anything). OpenCV wheels may not be available for every Python/CPU combination, including Windows ARM; in that case the standard `pip install .` can fail before `doctor` is available. See the [platform notes](docs/STATUS.md).
-
-For privacy, `install_check.py` suppresses pip's output and reports its exit code.
-This does not control pip's own file logging, configuration, environment, or
-process arguments: avoid placing credentials in command arguments, `PIP_LOG`,
-`--log`, or shared configuration, and inspect private logs before sharing.
-
-</details>
-
-<details>
-<summary><b>Linux (Debian / Ubuntu)</b></summary>
-
-```bash
-sudo apt install fonts-noto-cjk python3-venv
-# OCR engine and English language data:
-sudo apt install tesseract-ocr tesseract-ocr-eng
-
-git clone https://github.com/SPIRAL-EDWIN/PATT-pdf.git
-cd PATT-pdf
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install .
-patt-pdf fonts
-patt-pdf doctor
-```
-
-</details>
-
-`patt-pdf fonts` copies locally available fonts into a per-user directory; it does not download them. `doctor` reports detected fonts, Tesseract and environment warnings. If `patt-pdf` cannot even start (for example an editable install from a non-ASCII folder on Python 3.11 with a non-UTF-8 locale), run `python -S tools/preflight.py` with the same Python: it needs only the standard library, prints no local paths by default, and suggests a recovery. See [font and installation details](docs/REFERENCE.md#install) for custom paths and encoding caveats.
-
-## Quick start
-
-Put a PDF or a folder of PDFs at `./in`. Keep `./work` outside the input folder: it contains private working data. The following uses DeepL and sends translatable text to its API. Set `DEEPL_AUTH_KEY` in your environment first; API use may incur charges. Start with a small, non-sensitive sample.
-
-```bash
-patt-pdf plan      ./in --state ./work
-patt-pdf estimate  ./in --state ./work --backend deepl
-# Choose a budget after reviewing the estimate:
+patt-pdf plan      ./in --state ./work                     # analyse pages (offline)
+patt-pdf estimate  ./in --state ./work --backend deepl     # how many characters?
 patt-pdf translate ./in --state ./work --backend deepl --max-chars 10000 --yes
-patt-pdf render    ./in --state ./work --backend deepl
-patt-pdf report    ./in --state ./work --out report.md
-patt-pdf compare   ./in --state ./work --out ./comparison
-patt-pdf publish   ./in --state ./work --dest ./translated --suffix " zh-Hans"
+patt-pdf render    ./in --state ./work --backend deepl     # translated PDFs + checks
+patt-pdf report    ./in --state ./work --out report.md     # what to look at
+patt-pdf publish   ./in --state ./work --dest ./translated
 ```
 
-Review the report and comparison images before using the result. `publish` copies only files with `pass` status by default; a pass means no automated check found a problem, not that the translation is guaranteed correct. To use fixed translations without a network request, see the [manual backend example](docs/REFERENCE.md#quick-start-offline-no-api). Keep backend, manual translation memory and glossary options consistent across `estimate`, `translate` and `render`.
+`./in` holds your PDFs and is never written to. Nothing is sent to DeepL before `translate`, and never more than `--max-chars`.
 
-**Privacy and cost:** the state directory stores source text and translations in plain text. DeepL receives translatable text; its billing is determined by DeepL, including potentially processed requests whose outcome is unknown. The budget and quota checks do not guarantee the billed amount. Read [DeepL, privacy and cost](docs/REFERENCE.md#deepl-key-cost-and-privacy) before use.
+## What you get
+
+| | |
+|---|---|
+| **The page stays** | Text is replaced in its own box. Images, charts, table rules and page numbers are not redrawn; links are kept. |
+| **Numbers are checked** | Every figure in the source must appear in the translation. On the sample pages this caught DeepL turning `62B` into `62亿`. |
+| **A report, not a promise** | Each page is rated `pass`, `review` or `fail` with the reason. Only `pass` files are published by default. |
+| **Your budget** | An estimate first, a hard character cap, and a cache so nothing is paid twice. |
+| **Offline when needed** | Planning, layout tests and hand-made translations need no network. OCR runs locally and only on pages that need it. |
+
+## How well does it work?
+
+Results on 12 pages from 7 public documents (DeepL, v0.3.9.dev0, Linux), rated by PATT's own checks:
+
+| Document | Pages | Result |
+|---|---|---|
+| Research paper with figures (arXiv 2201.11903) | 2 | 1 pass · 1 fail (DeepL changed a figure) |
+| Two-column paper with a table (arXiv 2302.13971) | 2 | 1 review · 1 fail (figure legend mistranslated, table header merged) |
+| Journal article (PLOS ONE) | 2 | 1 review · 1 fail |
+| Standard with diagrams (NIST CSWP 29) | 2 | 1 pass · 1 fail (text inside an image stays English) |
+| Tax form (IRS W-9) | 1 | 1 pass |
+| Fact sheets with maps and photos (USGS) | 3 | 3 fail (curved labels, text inside images) |
+
+A `fail` usually means one item on the page needs a look, not that the page is unusable. A `pass` means the checks found nothing; it does not prove the translation is right. Read the report and compare by eye. Full notes: [docs/STATUS.md](docs/STATUS.md).
+
+**Not there yet:** English → Simplified Chinese only · tables are not rebuilt cell by cell · text inside images stays English · inline italics and link colours are lost · formulas and curved labels can break · no graphical interface · Windows is maintained separately and not verified for this version.
+
+## Privacy and cost
+
+The work folder stores source text and translations in plain text. DeepL receives the text you translate and decides the bill. Read [DeepL, privacy and cost](docs/REFERENCE.md#deepl-key-cost-and-privacy) first.
 
 ## Documentation
 
-- [Detailed reference](docs/REFERENCE.md) — installation, backends, QA statuses, exit codes, privacy and platform history
-- [Current status and verification](docs/STATUS.md) · [Architecture](docs/ARCHITECTURE.md) · [Migration](docs/MIGRATION.md)
-
-## Development
+[Install](docs/INSTALL.md) · [Reference](docs/REFERENCE.md) · [Status and verification](docs/STATUS.md) · [Architecture](docs/ARCHITECTURE.md)
 
 ```bash
-python -m pip install -e '.[dev]'
-python -m pytest -q
+python -m pip install -e '.[dev]' && python -m pytest -q      # development
 ```
 
-Tests run offline on synthetic fixtures; OCR tests require Tesseract. See the [editable-install caveats](docs/REFERENCE.md#install), especially for non-ASCII paths and older Python environments.
+## Sample pages
+
+<img src="docs/showcase/more.jpg" alt="Three more real pages split diagonally between original and translation" width="100%">
+
+The pictures are made with `tools/diagonal_compare.py` from these documents; the documents themselves are not in the repository.
+
+- Wei et al., *Chain-of-Thought Prompting Elicits Reasoning in Large Language Models*, [arXiv:2201.11903](https://arxiv.org/abs/2201.11903), CC BY 4.0.
+- Touvron et al., *LLaMA: Open and Efficient Foundation Language Models*, [arXiv:2302.13971](https://arxiv.org/abs/2302.13971), CC BY 4.0.
+- Coyle et al., [PLOS ONE 17(1): e0262897](https://doi.org/10.1371/journal.pone.0262897), CC BY 4.0.
+- U.S. Geological Survey Fact Sheet 2016–3020; NIST CSWP 29; IRS Form W-9: works of the U.S. government.
+
+The Chinese text in the pictures is machine translation produced by this tool. It is a modified version of the originals and is not endorsed by their authors.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). PATT-PDF uses PyMuPDF/MuPDF, available under AGPL or a commercial license. See [third-party notices](THIRD_PARTY_NOTICES.md) for dependencies, fonts and acknowledgements.
+[AGPL-3.0-or-later](LICENSE). PATT-PDF builds on PyMuPDF/MuPDF (AGPL or commercial). Dependencies and fonts: [third-party notices](THIRD_PARTY_NOTICES.md).
