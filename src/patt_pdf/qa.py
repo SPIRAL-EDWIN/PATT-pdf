@@ -167,7 +167,9 @@ def keep_integrity(src_path, out_path, pno, plan, dpi=110, threshold=0.15):
     # clipped, never in full. One pair of handles per page instead of one per kept item:
     # a map page with 160 kept figures re-opened and re-parsed the PDF 320 times.
     with pymupdf.open(src_path) as sd, pymupdf.open(out_path) as od:
-        crops = [(k, _crop(sd[pno], k[:4], dpi), _crop(od[pno], k[:4], dpi)) for k in plan.keeps]
+        # slanted text left in place: its upright box also covers neighbours that were translated
+        crops = [(k, _crop(sd[pno], k[:4], dpi), _crop(od[pno], k[:4], dpi)) for k in plan.keeps
+                 if not str(k[4]).startswith("[rotated]")]
     for k, a, b in crops:
         if a is None or b is None:
             continue

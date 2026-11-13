@@ -42,7 +42,7 @@ def _pieces(line):
 
 def plan_text_page(pg, pno):
     d = pg.get_text("rawdict", flags=pymupdf.TEXT_MEDIABOX_CLIP)
-    cells, keeps, rotated = [], [], []
+    cells, keeps, rotated, rot_ends = [], [], [], []
     line_keep_cands = []
     for bi, b in enumerate(d["blocks"]):
         if b.get("type") != 0: continue
@@ -62,6 +62,8 @@ def plan_text_page(pg, pno):
                                     family=font_family(sp0["font"], sp0["flags"]),
                                     color=_rgb(sp0["color"]), erase=[list(c["bbox"]) for c in chars if c["c"].strip()],
                                     angle=ang))
+                last = chars[-1]["bbox"]
+                rot_ends.append(((o[0], o[1]), ((last[0] + last[2]) / 2, (last[1] + last[3]) / 2)))
                 continue
             # footnote markers: small raised spans -> unicode superscript, merged into neighbour
             SUP = str.maketrans("0123456789,-*†‡abcdefghijklmnopqrstuvwxyz", "⁰¹²³⁴⁵⁶⁷⁸⁹'⁻*†‡ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖqʳˢᵗᵘᵛʷˣʸᶻ")
@@ -127,4 +129,42 @@ def plan_text_page(pg, pno):
         cells.sort(key=lambda x: (x["block"], x["y0"], x["x0"]))
     mark_rows(cells, keeps)
     units = [_para_to_unit(pno, "text", i, p) for i, p in enumerate(_group_cells(cells))]
-    return PagePlan(pno, "text", units + rotated, keeps)
+    notes = []
+    curved = curved_labels(rotated, rot_ends)
+    if curved:
+        # text set along a curve arrives as many short runs at different angles; translated
+        # run by run it overlaps. It stays as it is and is listed in the report.
+        notes.append({"curved_text": [rotated[i].src[:60] for i in sorted(curved)][:40], "curved_count": len(curved)})
+        keeps += [list(rotated[i].bbox) + ["[rotated] " + rotated[i].src] for i in sorted(curved)]
+        rotated = [u for i, u in enumerate(rotated) if i not in curved]
+    return PagePlan(pno, "text", units + rotated, keeps, notes)
+
+
+def curved_labels(rotated, ends) -> set:
+    """Indexes of slanted runs that belong to text set along a curve. A straight slanted
+    label (an arrow caption, an axis title) is one run, or several runs at one angle; it is
+    translated at its angle. Curved text shows as runs that continue each other (the end of
+    one is near the start of the next) while the angle changes, or as letter-spaced runs."""
+    out = set()
+
+    def axis(a):
+        return min(abs(a % 90), 90 - abs(a % 90)) < 1.5
+
+    for i, u in enumerate(rotated):
+        if axis(u.angle):
+            continue
+        toks = u.src.split()
+        if len(toks) >= 4 and sum(len(t) == 1 for t in toks) >= 0.6 * len(toks):
+            out.add(i); continue                      # "S A N  A N D R E A S"
+        for j, v in enumerate(rotated):
+            if i == j or axis(v.angle):
+                continue
+            d = abs(u.angle - v.angle) % 360
+            d = min(d, 360 - d)
+            if not 0.8 < d < 45:
+                continue
+            reach = 3.0 * max(u.size, v.size)
+            (us, ue), (vs, ve) = ends[i], ends[j]
+            if math.hypot(ue[0] - vs[0], ue[1] - vs[1]) < reach or math.hypot(ve[0] - us[0], ve[1] - us[1]) < reach:
+                out.add(i); break
+    return out

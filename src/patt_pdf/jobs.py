@@ -66,6 +66,8 @@ ISSUE_STATUS = {
     "decoration_check_failed": FAIL, "link_lost": FAIL, "text_crosses_rule": FAIL,
     # a translation that could not be used and could not be repaired: the source text stays
     "translation_left_source": REVIEW,
+    # text set along a curve (map labels) is not translated
+    "curved_text_left_english": REVIEW,
 }
 # informational (no status): "translation_repaired" — an unusable translation was repaired
 
@@ -786,6 +788,9 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
                         else:   # OCR found nothing legible: it may still contain text (busy backgrounds)
                             pq["issues"].append({"issue": "image_unverified", "bbox": im["bbox"]})
                 for n in plan.notes:
+                    if n.get("curved_text"):
+                        pq["issues"].append({"issue": "curved_text_left_english", "count": n.get("curved_count"),
+                                             "src": "; ".join(n["curved_text"])[:300]})
                     if n.get("source_repaired"):
                         pq["issues"].append({"issue": "source_repaired",
                                              "detail": "the PDF was damaged and reconstructed while opening; content may be missing"})

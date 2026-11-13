@@ -78,6 +78,12 @@ def markdown(ws: Workspace, files: list[str]) -> str:
     if left:
         out += ["", "## English left in place (inside images / textured backgrounds)", ""]
         out += [f"- {rel} p{pg}: {src}" for rel, pg, src in left]
+    kept = [(r["rel"], p["page"], i) for r in rows for p in r.get("pages", []) for i in p.get("issues", [])
+            if i.get("issue") in ("curved_text_left_english", "translation_left_source")]
+    if kept:
+        out += ["", "## Source text left in place (curved text; translations that could not be used)", ""]
+        out += [f"- {rel} p{pg}: " + (f"{i.get('count')} curved run(s): " if i["issue"].startswith("curved") else "")
+                + str(i.get("src", "")) for rel, pg, i in kept]
     acc = ws.state / "accept.json"
     if acc.exists():
         log = json.loads(acc.read_text(encoding="utf-8")).get("log", [])

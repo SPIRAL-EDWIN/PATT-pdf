@@ -218,6 +218,9 @@ def draw_units(pg, units, keeps=()):
             tw.append(o, u.tgt.replace("\n", " "), font=fnt, fontsize=s_)
             u._drawn = None                            # rotated: decorations are not moved
             rot_tw.append((tw, o, u.angle))
+            if w > L0 * 1.05 or s_ < u.size * 0.8:     # same reporting as for upright text
+                report.append({"uid": u.uid, "issue": "overflow" if w > L0 * 1.05 else "shrunk",
+                               "scale": round(s_ / u.size, 2), "src": u.src[:60], "angle": round(u.angle, 1)})
             continue
         s, ls, pitch, box, ok = fit_unit(u, pg.rect, obstacles)
         fnt = font(u.family, u.bold)
