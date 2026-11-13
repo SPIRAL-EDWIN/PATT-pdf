@@ -84,6 +84,8 @@ class Backend:
         return f"{self.name}:{hashlib.sha256(cfg.encode()).hexdigest()[:16]}"
 
     meter: "Meter | None" = None     # set by jobs.translate for backends that send requests
+    check_output = True              # machine output: checked and repaired (sanity.py)
+    supports_context = False         # translate(texts, context=...) is accepted
 
     def prepare(self) -> None:
         """One-time remote setup, called only after all budget checks passed."""
@@ -104,6 +106,7 @@ def decode_user_text(raw: bytes, what: str) -> str:
 
 class ManualBackend(Backend):
     name = "manual"
+    check_output = False             # the user's own wording is used as written
 
     def __init__(self, path: str | os.PathLike):
         raw = Path(path).read_bytes()
@@ -126,6 +129,7 @@ class PseudoBackend(Backend):
     NOT a translation — output is never publishable and always fails QA."""
     name = "pseudo"
     publishable = False
+    check_output = False
 
     def translate(self, texts):
         out = []
@@ -214,6 +218,7 @@ class DeepLBackend(Backend):
     and a hard stop on quota/auth errors. Every request is appended to ``ledger``."""
     name = "deepl"
     billable = True
+    supports_context = True
     RETRY = (429, 500, 502, 503, 504, 529)
 
     def __init__(self, ledger: Path, qps: float = 1.0, inflight: int = 2, glossary_id: str | None = None,
@@ -298,11 +303,15 @@ class DeepLBackend(Backend):
         self.glossary_id = g["glossary_id"]
         return self.glossary_id
 
-    def translate(self, texts):
+    def translate(self, texts, context: str | None = None):
+        """`context` (surrounding text) influences the translation but is not translated and,
+        per the DeepL API documentation, not billed. It is only used for single retries."""
         if self.stop.is_set():
             raise QuotaExceeded("stopped after an earlier quota/auth error")
         payload = {"text": texts, "source_lang": "EN", "target_lang": self.target_lang,
                    "split_sentences": "nonewlines", "preserve_formatting": True}
+        if context:
+            payload["context"] = context[:1000]
         if self.glossary_id:
             payload["glossary_id"] = self.glossary_id
         chars = sum(len(t) for t in texts)

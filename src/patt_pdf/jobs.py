@@ -39,6 +39,7 @@ from . import ENGINE_VERSION
 from .backends import AuthError, Backend, BackendError, BudgetExceeded, Meter, QuotaExceeded
 from .model import PagePlan, Unit
 from .ocr import OCRUnavailable
+from . import sanity
 from .tm import TranslationMemory
 
 # ---------------------------------------------------------------- statuses
@@ -63,7 +64,51 @@ ISSUE_STATUS = {
     "decoration_not_adjusted": REVIEW, "link_area_not_mapped": REVIEW,
     "markup_annotation_on_translated_text": REVIEW, "possible_underline_in_image": REVIEW,
     "decoration_check_failed": FAIL, "link_lost": FAIL, "text_crosses_rule": FAIL,
+    # a translation that could not be used and could not be repaired: the source text stays
+    "translation_left_source": REVIEW,
 }
+# informational (no status): "translation_repaired" — an unusable translation was repaired
+
+# origins whose text is the user's own wording or placeholder text: never "repaired"
+_UNCHECKED_ORIGINS = ("manual", "override", "pseudo")
+
+
+def sendable(u: Unit) -> bool:
+    """A unit that is sent to the translator. Image text is not translated (v0.x); text made
+    only of names, codes and figures has nothing to translate and stays as it is."""
+    return u.kind != "imgtext" and not sanity.nothing_to_translate(u.src)
+
+
+def resolve_target(u: Unit, tm: TranslationMemory, ns: str):
+    """What to draw for `u`: (text, origin, issue). text None = no translation available;
+    "" = leave the source in place. Translations are checked every time they are read, so a
+    bad entry cached by an older version is repaired here without any request."""
+    if not sendable(u):
+        return "", None, None
+    t, origin = tm.get(u.src, ns)
+    if t is None:
+        return None, None, None
+    issue = None
+    base = (origin or "").split("+")[0]
+    if base not in _UNCHECKED_ORIGINS:
+        if (origin or "").endswith("+repaired"):
+            issue = {"uid": u.uid, "issue": "translation_repaired", "src": u.src[:80], "tgt": t[:80]}
+        elif (origin or "").endswith("+kept"):
+            issue = {"uid": u.uid, "issue": "translation_left_source", "src": u.src[:80],
+                     "detail": "the translator's answer was unusable twice; the source text was kept"}
+        else:
+            fixed, how = sanity.repair(u.src, t)
+            if fixed is None:
+                issue = {"uid": u.uid, "issue": "translation_left_source", "src": u.src[:80],
+                         "detail": f"unusable translation ({how}); the source text was kept", "rejected": t[:80]}
+                t = sanity.KEEP
+            elif how != "ok":
+                issue = {"uid": u.uid, "issue": "translation_repaired", "src": u.src[:80], "tgt": fixed[:80],
+                         "detail": how, "rejected": t[:80]}
+                t = fixed
+    if t.strip() == sanity.KEEP or sanity.same_text(u.src, t):
+        return "", origin, issue                          # nothing to redraw: original glyphs stay
+    return t, origin, issue
 
 
 def worst(statuses) -> str:
@@ -439,8 +484,8 @@ def estimate(ws: Workspace, files: list[str], ns: str, tm: TranslationMemory | N
         for p in plans:
             kinds[p.kind] = kinds.get(p.kind, 0) + 1
             for u in p.units:
-                if u.kind == "imgtext":
-                    continue                       # image text is not translated (v0.x)
+                if not sendable(u):
+                    continue                       # image text; names, codes and figures only
                 if tm.get(u.src, ns)[0] is not None:
                     cache_hits += 1; continue
                 if u.src not in need:
@@ -523,6 +568,7 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
         return backend.translate(b)
 
     pending = list(batches)
+    retry: list = []; repairs: list = []
     inflight: dict = {}
     workers = max(1, workers)
     with ThreadPoolExecutor(workers) as ex:
@@ -562,7 +608,37 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
                 for s, t in zip(b, res):
                     if t is None:
                         summary["missing_from_backend"] += 1; continue
-                    tm.put(s, t, ns, backend.name); summary["translated_chars"] += len(s)
+                    origin = backend.name
+                    if backend.check_output:
+                        fixed, how = sanity.repair(s, t)
+                        if fixed is None:                     # decided after the batches: retry once
+                            retry.append((s, t, how)); continue
+                        if how != "ok":
+                            repairs.append({"src": s[:120], "rejected": t[:160], "used": fixed[:160], "step": how})
+                            t, origin = fixed, backend.name + "+repaired"
+                    tm.put(s, t, ns, origin); summary["translated_chars"] += len(s)
+    # Unusable answers: one more request per text, this time with the neighbouring text as
+    # context; then the local repair again; if that fails too, the source text is kept.
+    for s, bad, how in retry:
+        t2, step = None, "source_kept"
+        if backend.supports_context and not stop.is_set():
+            try:
+                res = backend.translate([s], context=_context_of(ws, files, pages, s))
+                summary["submitted_chars"] += len(s); summary["retried_with_context"] = summary.get("retried_with_context", 0) + 1
+                if res and res[0] is not None:
+                    fixed, how2 = sanity.repair(s, res[0])
+                    if fixed is not None:
+                        t2, step = fixed, "retry_with_context" + ("+label_removed" if how2 != "ok" else "")
+            except BackendError as e:                         # budget, quota, network: keep the source
+                log(_no_paths(ws, f"retry skipped: {e}"))
+        if t2 is None:
+            tm.put(s, sanity.KEEP, ns, backend.name + "+kept")
+        else:
+            tm.put(s, t2, ns, backend.name + "+repaired")
+        summary["translated_chars"] += len(s)
+        repairs.append({"src": s[:120], "rejected": bad[:160], "why": how, "used": (t2 or "(source text)")[:160], "step": step})
+    if repairs:
+        summary["repairs"] = repairs
     backend.meter = None
     if meter.attempts:                               # backend reported its HTTP attempts
         summary["sent_chars"] = meter.sent           # all attempts incl. retries (upper bound of billing)
@@ -585,6 +661,21 @@ def translate(ws: Workspace, files: list[str], backend: Backend, max_chars: int,
     else:
         summary["outcome"] = "failed"
     return _log_run(ws, _unreadable_is_incomplete(summary))
+
+
+def _context_of(ws, files, pages, src: str) -> str:
+    """Text around the first unit whose source is `src`: its neighbours on the page."""
+    for rel in files:
+        try:
+            plans = load_plan(ws, rel, pages=pages)
+        except StalePlan:
+            continue
+        for p in plans:
+            us = [u for u in p.units if u.kind != "imgtext"]
+            for i, u in enumerate(us):
+                if u.src == src:
+                    return " ".join(x.src for x in us[max(0, i - 2):i] + us[i + 1:i + 3])[:1000]
+    return ""
 
 
 def _unreadable_is_incomplete(summary):
@@ -639,11 +730,21 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
         src_sha = sha1_file(src)
         tm = ws.tm(); plans = load_plan(ws, rel, pages=pages)
         origins: set[str] = set()
+        left: set[str] = set()                 # uids whose source text stays on the page
+        notes_tr: dict[str, dict] = {}
         for plan in plans:
             for u in plan.units:
-                t, origin = tm.get(u.src, ns)
+                if u.kind == "imgtext":
+                    continue
+                t, origin, issue = resolve_target(u, tm, ns)
+                if issue:
+                    notes_tr[u.uid] = issue
+                if origin:
+                    origins.add(origin)
                 if t:
-                    u.tgt = t; origins.add(origin)
+                    u.tgt = t
+                elif t == "":
+                    left.add(u.uid); u.tgt = ""; u.kind = "keep"
         fs = F.FontSet([u.tgt for p in plans for u in p.units if u.tgt])
         token = F.activate(fs)
         tmp = None
@@ -657,6 +758,10 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
                 for u in plan.units:
                     if u.kind == "imgtext":
                         continue                   # reported via image inventory / screen_units
+                    if u.uid in notes_tr:
+                        pq["issues"].append(notes_tr[u.uid])
+                    if u.uid in left:
+                        continue                   # stays as in the source: nothing to check or draw
                     if not u.tgt:
                         missing += 1; continue
                     for issue in number_check(u.src, u.tgt) + url_check(u.src, u.tgt):
@@ -713,7 +818,7 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
                 pq["keep_changed"] = keep_integrity(src, out_path, plan.page, plan)
                 if pq["keep_changed"]:
                     pq["issues"].append({"issue": "keep_changed", "detail": pq["keep_changed"][:5]})
-                tg = [u.tgt for u in plan.units if u.tgt]
+                tg = [u.tgt for u in plan.units if u.tgt] + [u.src for u in plan.units if u.uid in left]
                 with pymupdf.open(out_path) as o:
                     if plan.kind == "text":
                         pq["residual_en"] = residual_english(o[plan.page], plan, tg)
