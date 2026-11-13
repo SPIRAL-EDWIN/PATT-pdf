@@ -48,6 +48,28 @@ patt-pdf doctor                                      # read-only: OS/CPU, encodi
 * **Editable installs** (`pip install -e`) put a `.pth` file into the environment. Older `site.py` versions (CPython 3.10, 3.11 and 3.12.0–3.12.3) read it with the *locale* encoding; CPython 3.12.4+ and 3.13+ read it as UTF-8 first. With an older `site.py`, a non-ASCII source folder and a non-UTF-8 locale, the package may not be importable, and on 3.11+ `PYTHONUTF8=1` does **not** help. On Linux there is a second case: in a legacy locale without UTF-8 Mode the *file system* encoding is not UTF-8, so even 3.12.4+ cannot find a non-ASCII folder (here `PYTHONUTF8=1` does help). Tested with real CPython 3.10.12, 3.11.18 and 3.12.16 builds on Linux; not yet confirmed on macOS or Windows. Use a regular install (`pip install .`) or an ASCII-only folder. `patt-pdf doctor` shows `pth_strategy` (read from the code your Python actually runs, also when `site` is frozen) and warns about the *current* environment; it cannot run at all once an editable install has stopped importing. In that case use `python -S tools/preflight.py` (standard library only): it reports whether the interpreter starts, whether `patt_pdf` imports, how each non-ASCII `.pth` line is decoded, and how to recover. Confirmed on a real Mac (v0.3.5 retest): Python 3.11.16, en_US.ISO8859-1 / zh_CN.GBK, editable install from a non-ASCII folder is not importable; 3.12.16 is.
 * **Windows long paths:** with `LongPathsEnabled` off, paths of 260+ characters fail, including pip's build folders. Use short folders such as `C:\patt\in`; PATT-PDF does not change the registry. Extended paths (`\\?\C:\…`) worked in one test but are not supported everywhere.
 
+## One command: `run`
+
+```bash
+patt-pdf run paper.pdf                        # DeepL; shows the estimate and asks before sending
+patt-pdf run paper.pdf --pages 1-3,7          # only these pages are translated; the output keeps all pages
+patt-pdf run ./in --out ./zh --max-chars 20000 --yes
+patt-pdf run ./in --backend manual --manual-tm tm.json        # offline, fixed translations
+```
+
+`run` performs the steps of the next section in order and copies every rendered file to `--out` (default `./translated`), whatever its status. It prints one line per file: status, pages, the main reason, the output file. It writes no status file; use `patt-pdf report` for details. The working folder (`--state`, default `./patt-work`) is private and lets an interrupted run continue.
+
+* A paid backend is called only after you answer `y`, or with both `--max-chars` and `--yes` when there is no terminal to ask in (scripts, CI). Otherwise nothing is sent and the exit code is 2.
+* Files that already exist in `--out` are not overwritten. The one exception is output that this working folder wrote itself and that has not been changed since; running the same command again replaces it.
+* Exit codes are those of `render` (below): 0 all files pass, 2 a file failed, could not be read or was not written, 3 review needed. 130 after Ctrl-C.
+* The summary is in Chinese when the locale (`LANG`, or `PATT_PDF_LANG`) starts with `zh`.
+
+**Page selection (`--pages`).** A comma-separated list of pages and ranges, 1-based: `7`, `7-9`, `7,9`, `1-3,7,10-` (`10-` = to the last page, `-3` = the first three). It applies to one document; with a folder, pick the file with `--files`. `plan`, `estimate`, `translate`, `render`, `compare` and `run` accept it; use the same selection for all steps of one job. Only the selected pages are analysed, counted, sent and checked. The output PDF keeps every page; pages outside the selection are unchanged and are not listed in reports. The selection is not part of the translation identity, so widening it later does not send text again.
+
+**Progress and speed.** `plan`, `render` and `run` print progress on stderr (one rewritten line in a terminal, one plain line per file when redirected); `--quiet` turns it off. Pages that need Tesseract (scans, pages with images) are analysed in separate processes: `--workers N`, default the CPU count up to 4.
+
+**Text that is deliberately left as it is.** Text made only of names, codes and figures (`LLaMA 7B`, `GPT-3`, `13.0B`) is not sent. Text set along a curve (map labels) stays in place and is listed as `curved_text_left_english`. A translation that cannot be used (for example the name of the target language appended to it) is repaired, retried once with context, or replaced by the source text (`translation_left_source`, review); it is never drawn.
+
 ## Quick start (offline, no API)
 
 ```bash
@@ -83,7 +105,7 @@ If you change the PDF, the engine version or the OCR setting after planning, eve
 | Status | Meaning |
 |---|---|
 | `pass` | No automatic check found a problem |
-| `review` | A human must look: figures read by OCR, text shrunk to fit, a kept item restored after editing, an underline or link area that could not be moved with the text, or an explicitly accepted limitation |
+| `review` | A human must look: figures read by OCR, text shrunk to fit, a kept item restored after editing, an underline or link area that could not be moved with the text, curved text or an unusable translation left as source text, or an explicitly accepted limitation |
 | `unverified` | A needed check could not run: OCR unavailable, residual check skipped, an image that OCR could not read, or possible outlined text on a page without a text layer |
 | `fail` | A known problem: untranslated or residual English, a number/URL mismatch, a changed kept figure, overflow, text crossing a table border, a lost link, image text left in English, or pseudo output |
 | `error` | The file could not be processed |

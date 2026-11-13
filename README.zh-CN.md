@@ -23,7 +23,7 @@ PATT-PDF 把中文译文放回英文原来的位置，<br>
 
 </div>
 
-<sub>真实页面，DeepL 翻译，未经修饰。每页左上是原文，右下是 PATT-PDF 的输出。按 PATT 自己的检查，论文页和表格页为 `pass`，地图页为 `fail`（弯曲的地图标注目前还处理不好）。[来源与许可](#示例页面)。</sub>
+<sub>真实页面，DeepL 翻译，未经修饰。每页左上是原文，右下是 PATT-PDF 的输出。按 PATT 自己的检查，论文页和表格页为 `pass`，地图页为 `fail`：图片里的文字不翻译，沿曲线排列的标注保留英文。[来源与许可](#示例页面)。</sub>
 
 ## 安装
 
@@ -38,17 +38,21 @@ curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.
 ## 使用
 
 ```bash
-export DEEPL_AUTH_KEY=...                                  # 你自己的 DeepL API 密钥
+export DEEPL_AUTH_KEY=...            # 你自己的 DeepL API 密钥
 
-patt-pdf plan      ./in --state ./work                     # 分析页面（离线）
-patt-pdf estimate  ./in --state ./work --backend deepl     # 要翻译多少字符？
-patt-pdf translate ./in --state ./work --backend deepl --max-chars 10000 --yes
-patt-pdf render    ./in --state ./work --backend deepl     # 生成译文 PDF 并检查
-patt-pdf report    ./in --state ./work --out report.md     # 哪些地方需要看
-patt-pdf publish   ./in --state ./work --dest ./translated
+patt-pdf run paper.pdf               # 先显示字符数，确认后才发送
+patt-pdf run paper.pdf --pages 1-3   # 先试几页：7   7-9   7,9   1-3,7,10-
+patt-pdf run ./papers --out ./zh --max-chars 20000 --yes      # 脚本用
 ```
 
-`./in` 放你的 PDF，工具不会写入这个目录。`translate` 之前不会向 DeepL 发送任何内容，发送量也不会超过 `--max-chars`。
+译文 PDF 放在 `./translated`，终端里每个文件一行：
+
+```text
+pass    form.pdf    1 页                                          → translated/form.pdf
+fail    paper.pdf   2 页：1 pass · 1 fail  数字或网址与原文不一致  → translated/paper.pdf
+```
+
+工具不会写入你的 PDF。确认之前不发送任何内容，发送量也不会超过 `--max-chars`。使用 `--pages` 时输出仍是整本文档，只有选中的页被翻译。每一步也可以单独执行（`plan`、`estimate`、`translate`、`render`、`report`、`compare`、`publish`），见[参考文档](docs/REFERENCE.md)。
 
 ## 你能得到什么
 
@@ -62,20 +66,20 @@ patt-pdf publish   ./in --state ./work --dest ./translated
 
 ## 实际效果如何？
 
-7 份公开文档共 12 页的结果（DeepL，v0.3.9.dev0，Linux），按 PATT 自己的检查评定：
+7 份公开文档共 14 页的结果（DeepL，v0.4.0.dev0，Linux），按 PATT 自己的检查评定：
 
-| 文档 | 页数 | 结果 |
-|---|---|---|
-| 带图的论文（arXiv 2201.11903） | 2 | 1 pass · 1 fail（DeepL 改了一个数字） |
-| 双栏论文，含表格（arXiv 2302.13971） | 2 | 1 review · 1 fail（图例误译、表头被合并） |
-| 期刊文章（PLOS ONE） | 2 | 1 review · 1 fail |
-| 带示意图的标准文件（NIST CSWP 29） | 2 | 1 pass · 1 fail（图片里的文字仍是英文） |
-| 税务表格（IRS W-9） | 1 | 1 pass |
-| 带地图和照片的科普单页（USGS） | 3 | 3 fail（弯曲标注、图片内文字） |
+| 文档 | 页数 | 结果 | 未全部通过的原因 |
+|---|---|---|---|
+| 带图的论文（arXiv 2201.11903） | 2 | 1 pass · 1 fail | DeepL 改了一个数字（`62B` → `62亿`） |
+| 双栏论文，含表格和图表（arXiv 2302.13971） | 3 | 2 review · 1 fail | 链接区域需核对；一处数字与原文不同 |
+| 期刊文章（PLOS ONE） | 3 | 2 review · 1 fail | 链接区域需核对；一个脚注标记被重画 |
+| 带示意图的标准文件（NIST CSWP 29） | 2 | 1 review · 1 fail | 图片里的文字仍是英文 |
+| 税务表格（IRS W-9） | 1 | 1 pass | |
+| 带地图和照片的科普单页（USGS） | 3 | 3 fail | 图片里的文字仍是英文 |
 
-`fail` 通常表示这一页有一处需要人看，不等于整页不能用。`pass` 表示检查没有发现问题，不保证译文正确。请阅读报告并对照原文。完整记录见 [docs/STATUS.md](docs/STATUS.md)。
+`fail` 通常表示这一页有一处需要人看，不等于整页不能用。`pass` 表示检查没有发现问题，不保证译文正确。使用前请对照原文。完整记录见 [docs/STATUS.md](docs/STATUS.md)。
 
-**目前还做不到：** 只支持英文 → 简体中文 · 表格不按单元格重排 · 图片里的文字不翻译 · 行内斜体和链接颜色会丢失 · 公式和弯曲标注可能出错 · 没有图形界面 · Windows 由协作者单独维护，本版本未在 Windows 上验证。
+**目前还做不到：** 只支持英文 → 简体中文 · 图片里的文字不翻译 · 沿曲线排列的文字（地图标注）保留英文 · 行内斜体和链接颜色会丢失 · 公式可能出错 · 表格按单元格翻译但不重排 · 没有图形界面 · 目前只在 Linux 上验证过，macOS 核查待完成，Windows 由协作者单独维护。
 
 ## 隐私与费用
 

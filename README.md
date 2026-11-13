@@ -23,7 +23,7 @@ and leaves figures, tables, rules and numbers in place.
 
 </div>
 
-<sub>Real pages translated with DeepL, unedited. Upper left of each page: the original. Lower right: the PATT-PDF output. PATT's own checks rate the paper and the form `pass` and the map page `fail` (curved map labels are not handled yet). [Sources and licences](#sample-pages).</sub>
+<sub>Real pages translated with DeepL, unedited. Upper left of each page: the original. Lower right: the PATT-PDF output. PATT's own checks rate the paper and the form `pass` and the map page `fail`: text inside its images is not translated, and labels that follow curves are left in English. [Sources and licences](#sample-pages).</sub>
 
 ## Install
 
@@ -38,17 +38,21 @@ The script prints each step before it runs, installs into its own folder and fin
 ## Use
 
 ```bash
-export DEEPL_AUTH_KEY=...                                  # your own DeepL API key
+export DEEPL_AUTH_KEY=...            # your own DeepL API key
 
-patt-pdf plan      ./in --state ./work                     # analyse pages (offline)
-patt-pdf estimate  ./in --state ./work --backend deepl     # how many characters?
-patt-pdf translate ./in --state ./work --backend deepl --max-chars 10000 --yes
-patt-pdf render    ./in --state ./work --backend deepl     # translated PDFs + checks
-patt-pdf report    ./in --state ./work --out report.md     # what to look at
-patt-pdf publish   ./in --state ./work --dest ./translated
+patt-pdf run paper.pdf               # shows the character count and asks before sending
+patt-pdf run paper.pdf --pages 1-3   # try a few pages first: 7   7-9   7,9   1-3,7,10-
+patt-pdf run ./papers --out ./zh --max-chars 20000 --yes      # for scripts
 ```
 
-`./in` holds your PDFs and is never written to. Nothing is sent to DeepL before `translate`, and never more than `--max-chars`.
+Translated PDFs go to `./translated`, and the terminal shows one line per file:
+
+```text
+pass    form.pdf    1 page                                                             → translated/form.pdf
+fail    paper.pdf   2 pages: 1 pass · 1 fail  a number or URL differs from the source  → translated/paper.pdf
+```
+
+Your PDFs are never written to. Nothing is sent before you confirm, and never more than `--max-chars`. With `--pages` the output keeps every page and only the selected ones are translated. Each step also exists as its own command (`plan`, `estimate`, `translate`, `render`, `report`, `compare`, `publish`): see the [reference](docs/REFERENCE.md).
 
 ## What you get
 
@@ -62,20 +66,20 @@ patt-pdf publish   ./in --state ./work --dest ./translated
 
 ## How well does it work?
 
-Results on 12 pages from 7 public documents (DeepL, v0.3.9.dev0, Linux), rated by PATT's own checks:
+Results on 14 pages from 7 public documents (DeepL, v0.4.0.dev0, Linux), rated by PATT's own checks:
 
-| Document | Pages | Result |
-|---|---|---|
-| Research paper with figures (arXiv 2201.11903) | 2 | 1 pass · 1 fail (DeepL changed a figure) |
-| Two-column paper with a table (arXiv 2302.13971) | 2 | 1 review · 1 fail (figure legend mistranslated, table header merged) |
-| Journal article (PLOS ONE) | 2 | 1 review · 1 fail |
-| Standard with diagrams (NIST CSWP 29) | 2 | 1 pass · 1 fail (text inside an image stays English) |
-| Tax form (IRS W-9) | 1 | 1 pass |
-| Fact sheets with maps and photos (USGS) | 3 | 3 fail (curved labels, text inside images) |
+| Document | Pages | Result | Why not all pass |
+|---|---|---|---|
+| Research paper with figures (arXiv 2201.11903) | 2 | 1 pass · 1 fail | DeepL changed a figure (`62B` → `62亿`) |
+| Two-column paper with tables and charts (arXiv 2302.13971) | 3 | 2 review · 1 fail | link areas to check; one figure differs from the source |
+| Journal article (PLOS ONE) | 3 | 2 review · 1 fail | link areas to check; a footnote mark was redrawn |
+| Standard with diagrams (NIST CSWP 29) | 2 | 1 review · 1 fail | text inside an image stays English |
+| Tax form (IRS W-9) | 1 | 1 pass | |
+| Fact sheets with maps and photos (USGS) | 3 | 3 fail | text inside images stays English |
 
-A `fail` usually means one item on the page needs a look, not that the page is unusable. A `pass` means the checks found nothing; it does not prove the translation is right. Read the report and compare by eye. Full notes: [docs/STATUS.md](docs/STATUS.md).
+A `fail` usually means one item on the page needs a look, not that the page is unusable. A `pass` means the checks found nothing; it does not prove the translation is right. Compare with the original before you rely on a page. Full notes: [docs/STATUS.md](docs/STATUS.md).
 
-**Not there yet:** English → Simplified Chinese only · tables are not rebuilt cell by cell · text inside images stays English · inline italics and link colours are lost · formulas and curved labels can break · no graphical interface · Windows is maintained separately and not verified for this version.
+**Not there yet:** English → Simplified Chinese only · text inside images stays English · text that follows a curve (map labels) stays English · inline italics and link colours are lost · formulas can break · tables are cut into cells but not re-flowed · no graphical interface · verified on Linux only so far; macOS checks are pending, and Windows is maintained separately.
 
 ## Privacy and cost
 

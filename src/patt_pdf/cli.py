@@ -89,7 +89,7 @@ def cmd_plan(a):
         prog.clear()
         extra = st.get("error") or (f"page errors: {st['page_errors']} (retried on next run)" if st.get("page_errors") else "")
         if st.get("reused_pages"):
-            extra = (extra + " " if extra else "") + f"(reused {st['reused_pages']} pages from an earlier interrupted run)"
+            extra = (extra + " " if extra else "") + f"(reused {st['reused_pages']} pages planned earlier)"
         if st["status"] == "partial":
             extra = (extra + " " if extra else "") + f"(stopped by --time-budget after {st['pages']} of {st['total']} pages; run plan again to continue)"
         print(f"{st['status']:20s} {st.get('pages', ''):>4} pages  {rel}  {extra}")

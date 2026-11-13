@@ -1,15 +1,45 @@
-# Status of v0.3.9.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
+# Status of v0.4.0.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.3.9.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.4.0.dev0` (a development pre-release, not a stable release).
 
 **Scope (user decision, 2026-11-08):** the maintainer's work (Claude) covers **macOS and Linux**. **Windows** development and native testing are done by a **Windows collaborator**. Windows support is not dropped: Windows code paths, Windows-specific tests, the Windows retest prompt and the Windows-only CI steps stay in the repository, but the default CI matrix no longer runs Windows jobs. **This version is not verified on Windows in any way.** Known Windows issues for the collaborator are listed in §0-WIN.
 
 **The stage is NOT complete**, and completing it would not mean production readiness.
 
-**Verified for this version (0.3.9.dev0):** only on Linux aarch64 (container), CPython 3.10.12: full suite 301 passed / 6 skipped, and the real-PDF run of §0-P. Not run in CI, not run on the user's Mac, not run on Python 3.11–3.13 (the 3.11.18/3.12.16 results in §4 belong to 0.3.8.dev0).
+**Verified for this version (0.4.0.dev0):** only on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2: full suite 447 passed / 5 skipped with the real-document cache present (432 passed / 20 skipped without it), and the DeepL re-run of §0-Q. Not run in CI, not run on macOS, not run on Python 3.11–3.13. ShellCheck was not available in this container; `install.sh` is unchanged since its last check.
 **CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
 
 **Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs beyond the twelve pages of §0-P (none in the repository); DeepL beyond those two runs; Preview/Acrobat interaction beyond opening.
+
+## 0-Q. v0.4.0.dev0: one command, page selection, tables, unusable translations (2026-11-13)
+
+Engine `patt-0.4-e1` (plans are re-made). Everything below was run on Linux aarch64 only.
+
+| Change | What it does | Evidence |
+|---|---|---|
+| `patt-pdf run` | plan → estimate → confirm → translate → render → copy to `--out`; one line per file on the terminal; every rendered file is delivered whatever its status; no status file | 13 tests; real run on the seven documents (below) |
+| `--pages` | `7`, `7-9`, `7,9`, `1-3,7,10-` for plan, estimate, translate, render, compare, run; output keeps all pages; unselected pages are not listed anywhere | 42 tests incl. pixel-identical untouched pages |
+| Progress and speed | progress on stderr (`--quiet` to silence); pages that need Tesseract are planned in up to 4 processes; render no longer loops over all vector paths per paragraph and opens each file once per page for the keep check | USGS fact sheet, 6 pages, `plan`: 79 s → 28 s with 4 workers, identical plan. Map page render: about 55 s → 16 s, identical pixels and QA |
+| Unusable translations | text made only of names, codes and figures is not sent; answers are checked on arrival and when read from the cache; repair by removing an added language label, else one retry with context, else the source text stays (review) | 47 tests. On the 433 DeepL segments of §0-P: 8 not sent, 1 repaired, 0 others changed. The legend that had "简体中文（大陆）" appended is now shown unchanged |
+| Curved text | runs that continue each other at changing angles, or letter-spaced runs, stay as they are and are listed (`curved_text_left_english`, review); straight slanted labels are translated at their angle | 6 tests; USGS map page: 41 of 51 slanted runs left in place, no overlapping labels |
+| Table cells | rows are cut at vertical rules, or at the gutters of at least two aligned body rows with three or more cells | 7 tests; the header of the three-line table in arXiv 2302.13971 is seven cells |
+| Real-document corpus | manifest with URL, SHA-256, licence; PDFs fetched into a cache, never committed | `tests/test_real_corpus.py`, 16 tests, skipped without the cache |
+
+**DeepL re-run** (free API, 5,885 characters billed in this round: 61 + 2,176 + 3,648; the cap set by the user was 22,071). Fourteen pages, selected with `--pages` from the full documents:
+
+| Document | Pages | Status per page | Cause of the worst status |
+|---|---|---|---|
+| arXiv 2201.11903v6 | 1, 4 | pass, fail | DeepL wrote "62 亿 / 540 亿" for "62B / 540B" (a real translation error, caught by the number check) |
+| arXiv 2302.13971v1 | 1, 3, 8 | review, fail, review | page 3: the source caption says "65 models", DeepL wrote "65B" (it corrected a typo of the source; reported as a difference). Reviews: link areas not matched to the translated words |
+| PLOS ONE e0262897 | 1, 2, 4 | fail, review, review | page 1: a footnote asterisk was redrawn in another face (`keep_changed`) |
+| NIST CSWP 29 | 9, 11 | review, fail | page 11: text inside a diagram image |
+| USGS FS 2016-3020 | 1, 3 | fail, fail | text inside images; curved labels left in English |
+| USGS FS 2023-3003 | 1 | fail | text inside images |
+| IRS W-9 | 1 | pass | |
+
+Totals: 2 pass, 5 review, 7 fail. The twelve pages of §0-P are among them; compared with §0-P, one page went from pass to review (NIST page 9: a link inside a paragraph that is now kept whole is reported as not matched), and the two pages added in this round are review.
+
+**Seen in this run and not fixed:** link rectangles inside long paragraphs are not matched to the translated words (most `review` pages); the retry with DeepL's `context` parameter is implemented and tested against a scripted backend, but no real answer needed it, so its effect on DeepL is not measured; author names are translated; inline styles are lost; "CSF Profiles" is still mistranslated without a glossary.
 
 ## 0-P. First run on real PDFs with DeepL (2026-11-13, v0.3.9.dev0, engine patt-0.3-e4)
 
