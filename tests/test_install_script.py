@@ -507,3 +507,84 @@ def test_intended_exit_codes_are_unchanged(tmp_path):
     uv.write_text(FAKE_UV.replace('echo "stand-in $*"', '[ "$1" = doctor ] && exit 2; echo "stand-in $*"'), encoding="utf-8")
     rc, out = _install(tmp_path, env=tools, name="d")
     assert rc == 2 and "reported problems above (exit 2)" in out, out[-600:]
+
+
+# ------------------------------------------------------------------ the Homebrew branch (macOS)
+FAKE_UNAME = """#!/bin/bash
+case "$1" in -m) echo arm64 ;; *) echo Darwin ;; esac
+"""
+FAKE_BREW = """#!/bin/bash
+echo "BREW $* | api=${HOMEBREW_API_DOMAIN:-none} bottles=${HOMEBREW_BOTTLE_DOMAIN:-none}" >> "$UV_LOG"
+"""
+
+
+def _mac_tools(tmp_path):
+    """Stand-ins that make the script take its macOS path anywhere: `uname` says Darwin and
+    `brew` only records how it was called. No real Homebrew is touched, also on a Mac."""
+    env = _tools(tmp_path)
+    d = Path(env["PATH"].split(os.pathsep)[0])
+    for name, text in (("uname", FAKE_UNAME), ("brew", FAKE_BREW)):
+        (d / name).write_text(text, encoding="utf-8"); (d / name).chmod(0o755)
+    return env
+
+
+def _mac_install(tmp_path, *extra, env, name="m", bash=None):
+    home = tmp_path / "home"; home.mkdir(exist_ok=True)
+    return _run("--source", ROOT, "--no-modify-path", "--python", sys.executable,
+                "--prefix", tmp_path / name, "--bin-dir", tmp_path / (name + "-bin"), *extra, home=home, env_extra=env, bash=bash)
+
+
+def _system_noto():
+    import glob
+    return bool(glob.glob("/Library/Fonts/NotoSansCJK*")) and bool(glob.glob("/Library/Fonts/NotoSerifCJK*"))
+
+
+@needs_bash
+def test_homebrew_step_uses_the_mirror_for_this_run_only(tmp_path):
+    """macOS check E10: with the mirror, brew is called with the TUNA bottle and API domains
+    in its environment; with the official sources it is called without them. Nothing else is
+    configured. The script also says that Homebrew may update itself (it did: 7.0.3 to 7.0.13)."""
+    for n, bash in enumerate(_bashes()):
+        env = _mac_tools(tmp_path)
+        (tmp_path / "uv.log").write_text("", encoding="utf-8")
+        rc, out = _mac_install(tmp_path, "--mirror", "cn", env=env, name=f"m{n}", bash=bash)
+        assert rc == 0, (bash, out[-1500:])
+        assert "PATT-PDF installer (macos)" in out and "Step 1/5: system components with Homebrew" in out
+        assert "Homebrew may first update itself" in out
+        assert "Homebrew packages come from the mirror for this run" in out
+        calls = [l for l in _log(tmp_path).splitlines() if l.startswith("BREW ")]
+        assert any(l.startswith("BREW install tesseract |") for l in calls), calls
+        assert calls and all("api=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api" in l
+                             and "bottles=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles" in l for l in calls), calls
+        if not _system_noto():
+            assert any(l.startswith("BREW install --cask font-noto-sans-cjk font-noto-serif-cjk |") for l in calls), calls
+            assert "about 235 MB" in out
+        # official sources: the same calls, no mirror in the environment
+        (tmp_path / "uv.log").write_text("", encoding="utf-8")
+        rc, out = _mac_install(tmp_path, "--mirror", "official", env=env, name=f"o{n}", bash=bash)
+        assert rc == 0, (bash, out[-1500:])
+        calls = [l for l in _log(tmp_path).splitlines() if l.startswith("BREW ")]
+        assert calls and all("api=none bottles=none" in l for l in calls), calls
+        assert "Homebrew packages come from the mirror" not in out
+        # no brew command other than `install`: nothing is tapped, configured or upgraded by the script
+        assert all(l.split()[1] == "install" for l in calls), calls
+
+
+@needs_bash
+def test_fonts_that_are_already_installed_are_not_downloaded_again(tmp_path):
+    """macOS check E10, second run: "Noto Sans/Serif CJK fonts are already installed"."""
+    env = _mac_tools(tmp_path)
+    fonts = tmp_path / "home" / "Library" / "Fonts"; fonts.mkdir(parents=True)
+    for f in ("NotoSansCJK.ttc", "NotoSerifCJK.ttc"):
+        (fonts / f).write_bytes(b"stand-in")
+    rc, out = _mac_install(tmp_path, "--mirror", "official", env=env)
+    assert rc == 0, out[-1500:]
+    assert "already installed: not downloaded again" in out and "about 235 MB" not in out
+    calls = [l for l in _log(tmp_path).splitlines() if l.startswith("BREW ")]
+    assert not any("--cask" in l for l in calls) and any("install tesseract" in l for l in calls), calls
+    # only one of the two families present: both casks are installed
+    (fonts / "NotoSerifCJK.ttc").unlink()
+    if not _system_noto():
+        (tmp_path / "uv.log").write_text("", encoding="utf-8")
+        rc, out = _mac_install(tmp_path, "--mirror", "official", env=env, name="m2")
+        assert rc == 0 and any("--cask font-noto-sans-cjk font-noto-serif-cjk" in l for l in _log(tmp_path).splitlines())

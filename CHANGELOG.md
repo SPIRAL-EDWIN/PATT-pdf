@@ -7,10 +7,16 @@ is still unverified is recorded per version in [docs/STATUS.md](docs/STATUS.md).
 
 First version published after `0.3.8.dev0`; it contains everything listed below.
 
-- Documentation follows the macOS checks: the READMEs state what was run on Linux and on an
-  Apple Silicon Mac and what was not; the install guide gives the measured download times.
-- The installer no longer says that uv is "much faster" than pip: one measurement showed
-  no gain on a fast connection.
+- **Checked on macOS as well.** Three rounds on an Apple Silicon Mac, including one complete
+  install through Homebrew. The READMEs and `docs/STATUS.md` say what was run where.
+- **Front page.** New showcase images for light and dark themes; the language tags no
+  longer cover the pages; the map page is re-made with the current engine. Results and
+  limits are separate sections.
+- **Installer.** Says that Homebrew may update itself before installing; no longer claims
+  that uv is much faster than pip (one measurement showed no gain on a fast connection).
+  Its Homebrew branch is now exercised by tests with a stand-in `brew`.
+- **Project files.** `CONTRIBUTING.md`, `SECURITY.md`, an issue form and this change log.
+- `tools/diagonal_compare.py`: `--swap N` shows a card with the translation on the left.
 
 ## 0.4.2.dev0 — 2026-11-13
 

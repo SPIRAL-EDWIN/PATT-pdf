@@ -1,0 +1,39 @@
+name: Problem report
+description: Something does not work, or a translated page looks wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach private documents, API keys or the working folder (`--state`).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The full command you ran, what you expected and what you got. For layout problems add a screenshot next to the original, or the image from `patt-pdf compare`.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `patt-pdf --version` and `patt-pdf doctor`
+      description: The doctor report contains no local paths.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: System
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: document
+    attributes:
+      label: The document
+      description: A link or attachment only if you may share it publicly. Otherwise describe the page (two columns, a table without rules, a map, a scan…).

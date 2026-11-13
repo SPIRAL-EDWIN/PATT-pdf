@@ -32,6 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.
 * **官方源。** `pypi.org`、Homebrew 自己的服务器和 GitHub。不在中国大陆时请选这个。
 * 可以用 `--mirror cn` 或 `--mirror official`（或环境变量 `PATT_PDF_MIRROR`）预先回答。没有终端时（CI、`--yes`）使用镜像。镜像 8 秒内没有响应时自动改用官方源。
 * 该设置只对本次运行生效，不会改动 pip 和已有 Homebrew 的配置。唯一的例外会在发生时说明：由脚本通过镜像安装的 Homebrew，会继续以镜像作为更新来源。
+* 在 macOS 上，`brew install` 可能会先更新 Homebrew 自己（程序和软件包列表）。安装器会事先说明；这项更新会保留在你的机器上。
 * 镜像上没有的两样：PATT-PDF 自己的源码（约 2 MB，来自 GitHub），以及 macOS 上的 Noto CJK 字体（约 235 MB，由 Homebrew 从 GitHub 下载；字体已安装时跳过）。即使选了镜像，这两样仍来自 GitHub。
 
 五个步骤各自显示序号、下载内容和大致下载量，下载工具显示自己的进度。Python 包约 75–110 MB，因平台而异。如果本机已有 [`uv`](https://docs.astral.sh/uv/)，脚本会用它（并行下载），否则用 pip；脚本不会安装 uv。`--no-uv` 强制使用 pip。
@@ -46,7 +47,7 @@ less install.sh
 bash install.sh            # 选项：--help、--ref v0.x.y、--mirror cn|official、--no-uv、--no-system、--yes、--uninstall
 ```
 
-重新运行脚本即为升级；`bash install.sh --uninstall`（或 `curl … | bash -s -- --uninstall`）会删除虚拟环境和命令链接，不动系统软件包、字体和你的数据。`--no-system` 跳过第 1 步，适合自己安装字体、Tesseract 和 Python 的情况；`--ref` 安装指定标签或提交而不是 `main`。CI 在预备好系统依赖的环境中检查安装流程。Fedora、Arch、openSUSE 的系统软件包安装尚未验证（见[平台状态](STATUS.md)）。该脚本不适用于 Windows。
+重新运行脚本即为升级；`bash install.sh --uninstall`（或 `curl … | bash -s -- --uninstall`）会删除虚拟环境和命令链接，不动系统软件包、字体和你的数据。`--no-system` 跳过第 1 步，适合自己安装字体、Tesseract 和 Python 的情况；`--ref` 安装指定标签或提交而不是 `main`。包含系统组件的完整安装已在一台装有 Homebrew 的 Apple Silicon Mac 上跑通；CI 在预备好系统依赖的环境中检查安装流程。尚未验证：没有 Homebrew 的 Mac、Intel Mac，以及 Fedora、Arch、openSUSE 的系统软件包（见[平台状态](STATUS.md)）。该脚本不适用于 Windows。
 
 ## 手动安装
 

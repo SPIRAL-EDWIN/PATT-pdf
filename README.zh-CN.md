@@ -12,6 +12,7 @@ PATT-PDF 把中文译文放回英文原来的位置，<br>
 图片、表格、线条和数字都留在原处。
 
 [![Status: experimental](https://img.shields.io/badge/status-experimental-orange)](docs/STATUS.md)
+[![Tests](https://github.com/SPIRAL-EDWIN/PATT-pdf/actions/workflows/tests.yml/badge.svg)](https://github.com/SPIRAL-EDWIN/PATT-pdf/actions/workflows/tests.yml)
 [![Python: ≥3.10](https://img.shields.io/badge/python-%E2%89%A53.10-blue)](pyproject.toml)
 [![macOS: Homebrew](https://img.shields.io/badge/macOS-Homebrew-orange?logo=homebrew&logoColor=white)](docs/INSTALL.zh-CN.md)
 [![Linux](https://img.shields.io/badge/Linux-Debian%20%C2%B7%20Ubuntu-blue?logo=linux&logoColor=white)](docs/INSTALL.zh-CN.md)
@@ -19,11 +20,18 @@ PATT-PDF 把中文译文放回英文原来的位置，<br>
 
 [English](README.md) · **简体中文**
 
-<img src="docs/showcase/hero.jpg" alt="三张真实页面，每张沿对角线分开：左上是英文原文，右下是 PATT-PDF 输出的简体中文" width="100%">
+[安装](#安装) · [使用](#使用) · [实际效果](#实际效果如何) · [目前的限制](#目前的限制) · [文档](#文档)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/showcase/hero-dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/showcase/hero-light.jpg">
+  <img src="docs/showcase/hero-light.jpg" alt="三张真实页面，每张沿对角线分为英文原文和 PATT-PDF 输出的简体中文" width="100%">
+</picture>
+
+<sub>真实页面，DeepL 翻译，未经修饰。每页沿对角线分为原文和 PATT-PDF 的输出。<br>
+按 PATT 自己的检查，论文页和表格页通过；地图页未通过，因为图片里的文字保留了英文。<a href="#示例页面">来源与许可</a></sub>
 
 </div>
-
-<sub>真实页面，DeepL 翻译，未经修饰。每页左上是原文，右下是 PATT-PDF 的输出。按 PATT 自己的检查，论文页和表格页为 `pass`，地图页为 `fail`：图片里的文字不翻译，沿曲线排列的标注保留英文。[来源与许可](#示例页面)。</sub>
 
 ## 安装
 
@@ -33,7 +41,13 @@ macOS 与 Linux，一行命令：
 curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.sh | bash
 ```
 
-脚本分五步进行，每一步显示下载量和进度，装进自己的独立目录，最后自检。默认通过国内镜像（清华 TUNA）下载；脚本会先说明并询问，你可以改用官方源，或直接加 `--mirror official`。Mac 上如果没有 Homebrew，会先征得你同意再安装。详细说明、手动安装与卸载见 [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md)。
+安装器分五步进行，每一步显示下载什么、大约多大以及进度。它装进自己的独立目录，最后自检。
+
+- **在中国大陆下载快。** 默认通过清华 TUNA 镜像下载。安装器会先说明，并让你选择是否改用官方源（也可以直接加 `--mirror official`）。
+- **改动系统前先询问。** Mac 上如果没有 Homebrew，会先征得你同意再安装。
+- **已有的不重复装。** 已安装的字体不再下载；本机有 `uv` 就用它。
+
+详细说明、手动安装与卸载见 [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md)。
 
 ## 使用
 
@@ -60,26 +74,38 @@ fail    paper.pdf   2 页：1 pass · 1 fail  数字或网址与原文不一致 
 |---|---|
 | **版面保留** | 文字在自己的框里替换。图片、图表、表格线和页码不重画，链接保留。 |
 | **数字核对** | 原文里的每个数字都必须出现在译文里。示例页面中，它查出 DeepL 把 `62B` 译成了 `62亿`。 |
-| **给报告，不打包票** | 每页标为 `pass`、`review` 或 `fail` 并说明原因。默认只发布 `pass` 的文件。 |
+| **给报告，不打包票** | 每页标为 `pass`、`review` 或 `fail` 并说明原因，让你知道该看哪里。 |
 | **预算由你定** | 先估算，再设字符上限；有缓存，同一句不会付两次钱。 |
 | **可以离线** | 页面分析、版面测试和人工译文都不需要联网。OCR 在本机运行，只在需要的页面上调用。 |
 
 ## 实际效果如何？
 
-7 份公开文档共 14 页的结果（DeepL，用 v0.4.0.dev0 在 Linux 上测得），按 PATT 自己的检查评定：
+7 份公开文档共 14 页，用 DeepL 翻译，按 PATT 自己的检查评定：
 
 | 文档 | 页数 | 结果 | 未全部通过的原因 |
-|---|---|---|---|
-| 带图的论文（arXiv 2201.11903） | 2 | 1 pass · 1 fail | DeepL 改了一个数字（`62B` → `62亿`） |
-| 双栏论文，含表格和图表（arXiv 2302.13971） | 3 | 2 review · 1 fail | 链接区域需核对；一处数字与原文不同 |
-| 期刊文章（PLOS ONE） | 3 | 2 review · 1 fail | 链接区域需核对；一个脚注标记被重画 |
-| 带示意图的标准文件（NIST CSWP 29） | 2 | 1 review · 1 fail | 图片里的文字仍是英文 |
-| 税务表格（IRS W-9） | 1 | 1 pass | |
-| 带地图和照片的科普单页（USGS） | 3 | 3 fail | 图片里的文字仍是英文 |
+|---|:---:|---|---|
+| 带图的论文 · arXiv 2201.11903 | 2 | 1 pass · 1 fail | DeepL 改了一个数字（`62B` → `62亿`） |
+| 双栏论文，含表格和图表 · arXiv 2302.13971 | 3 | 2 review · 1 fail | 链接区域需核对；一处数字与原文不同 |
+| 期刊文章 · PLOS ONE | 3 | 2 review · 1 fail | 链接区域需核对；一个脚注标记被重画 |
+| 带示意图的标准文件 · NIST CSWP 29 | 2 | 1 review · 1 fail | 图片里的文字仍是英文 |
+| 税务表格 · IRS W-9 | 1 | 1 pass | |
+| 带地图和照片的科普单页 · USGS | 3 | 3 fail | 图片里的文字仍是英文 |
 
-`fail` 通常表示这一页有一处需要人看，不等于整页不能用。`pass` 表示检查没有发现问题，不保证译文正确。使用前请对照原文。完整记录见 [docs/STATUS.md](docs/STATUS.md)。
+`fail` 通常表示这一页有一处需要人看，不等于整页不能用。`pass` 表示检查没有发现问题，不保证译文正确。使用前请对照原文。
 
-**目前还做不到：** 只支持英文 → 简体中文 · 图片里的文字不翻译 · 沿曲线排列的文字（地图标注）保留英文 · 行内斜体和链接颜色会丢失 · 公式可能出错 · 表格按单元格翻译但不重排 · 没有图形界面 · 已在 Linux（aarch64）和一台 Apple Silicon Mac 上核查；安装器的 Homebrew 部分和 Intel Mac 尚未验证，Windows 由协作者单独维护。
+<sub>用 v0.4.0.dev0 在 Linux 上测得。在哪台机器上跑过什么、没跑过什么，见 [docs/STATUS.md](docs/STATUS.md)。</sub>
+
+## 目前的限制
+
+PATT-PDF 仍是实验性项目，目前做不到以下几点：
+
+- **语言：**只支持英文 → 简体中文。
+- **图片：**图片里的文字保留英文（报告里会列出）。
+- **弯曲文字：**沿曲线排列的标注（如地图上的）保留英文。
+- **样式：**段落内的斜体和链接颜色会丢失。
+- **表格与公式：**表格按单元格原位翻译，但不重排；公式可能出错。
+- **界面：**只有命令行。
+- **平台：**已在 Linux（aarch64）和一台 Apple Silicon Mac 上核查，包括通过 Homebrew 的完整安装。尚未验证：Intel Mac、没有 Homebrew 的 Mac、Fedora/Arch/openSUSE 的软件包。Windows 由协作者单独维护。
 
 ## 隐私与费用
 
@@ -87,7 +113,7 @@ fail    paper.pdf   2 页：1 pass · 1 fail  数字或网址与原文不一致 
 
 ## 文档
 
-[安装](docs/INSTALL.zh-CN.md) · [参考文档](docs/REFERENCE.md) · [状态与验证](docs/STATUS.md) · [更新记录](CHANGELOG.md) · [架构](docs/ARCHITECTURE.md)
+[安装](docs/INSTALL.zh-CN.md) · [参考文档](docs/REFERENCE.md) · [状态与验证](docs/STATUS.md) · [更新记录](CHANGELOG.md) · [架构](docs/ARCHITECTURE.md) · [参与贡献](CONTRIBUTING.md) · [安全](SECURITY.md)
 
 ```bash
 python -m pip install -e '.[dev]' && python -m pytest -q      # 开发
@@ -95,7 +121,11 @@ python -m pip install -e '.[dev]' && python -m pytest -q      # 开发
 
 ## 示例页面
 
-<img src="docs/showcase/more.jpg" alt="另外三张真实页面，沿对角线分为原文与译文" width="100%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/showcase/more-dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/showcase/more-light.jpg">
+  <img src="docs/showcase/more-light.jpg" alt="另外三张真实页面，沿对角线分为原文与译文" width="100%">
+</picture>
 
 图片由 `tools/diagonal_compare.py` 根据下列文档生成；文档本身不在仓库中。
 

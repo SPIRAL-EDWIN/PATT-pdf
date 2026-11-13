@@ -1,15 +1,37 @@
-# Status of v0.4.3.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
+# Status of v0.4.3.dev0 (2026-11-13)
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.4.3.dev0` (a development pre-release, not a stable release).
+PATT-PDF is **experimental**: a development pre-release, usable from the command line on macOS and Linux, with known limits. This page says what has actually been run, where, and what has not. The sections below the summary are the working record, newest first; they are detailed on purpose.
 
-**Scope (user decision, 2026-11-08):** the maintainer's work (Claude) covers **macOS and Linux**. **Windows** development and native testing are done by a **Windows collaborator**. Windows support is not dropped: Windows code paths, Windows-specific tests, the Windows retest prompt and the Windows-only CI steps stay in the repository, but the default CI matrix no longer runs Windows jobs. **This version is not verified on Windows in any way.** Known Windows issues for the collaborator are listed in §0-WIN.
+## At a glance
 
-**The stage is NOT complete**, and completing it would not mean production readiness.
+| Area | State |
+|---|---|
+| **Linux** (aarch64 container, CPython 3.10.12) | full suite 482 passed / 3 skipped; with Tesseract hidden 477 / 8. Bash 5.1 and a source-built bash 3.2.57; ShellCheck 0.10.0 clean |
+| **macOS** (one Apple Silicon Mac, macOS 27.2.1, system bash 3.2.57, CPython 3.12.16) | three check rounds on the code of this version (§0-R2 to §0-R5): 482 passed / 1 skipped; `run`, `--pages`, progress, parallel planning, interrupt and resume, Preview checks, the installer in five locales |
+| **Installer** | from a local checkout on Linux and macOS, with pip and with uv, mirror and official sources. **Homebrew path run once on that Mac** (§0-R5): fonts installed, then skipped when present; Homebrew downloads came from the mirror |
+| **Real documents** | seven public documents, 14 pages, with DeepL on Linux: 2 pass, 5 review, 7 fail (§0-Q). Layout regressions on the same documents without a translation service: 16 tests, Linux and macOS |
+| **GitHub Actions** | last run on `c6c9ed5`: Linux 4/4, macOS 3/3. **No run yet for any later commit**, including this version; two steps are new (real documents, macOS system bash) |
+| **Windows** | maintained by a separate collaborator; **not verified for this version** (§0-WIN) |
 
-**Verified for this version (0.4.3.dev0):** it differs from `0.4.2.dev0` only in documentation, the version number and one comment in `install.sh` (§0-R4). The code of `0.4.2.dev0` (`a92eba7`) was run on Linux aarch64 (container, CPython 3.10.12, bash 5.1 and a source-built bash 3.2.57: 480 passed / 3 skipped; 475 / 8 with Tesseract hidden; ShellCheck 0.10.0 clean) and on the user's Apple Silicon Mac (§0-R4: 482 passed / 1 skipped, all nine installer checks passed). **Not verified:** the Homebrew part of the installer (never run), Intel Macs, a Mac without Homebrew, Fedora/Arch/openSUSE packages, Python 3.11 and 3.13, GitHub Actions for any commit after `703efcd`.
-**CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
+**Not verified:** Intel Macs; a Mac without Homebrew (the installer would install Homebrew after asking); Fedora, Arch and openSUSE packages; Python 3.11 and 3.13 for this version; a download of a Tesseract bottle through the mirror (it was already installed); scanned pages and the OCR path on real documents; long documents end to end; any language pair other than English → Simplified Chinese.
 
-**Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs beyond the twelve pages of §0-P (none in the repository); DeepL beyond those two runs; Preview/Acrobat interaction beyond opening.
+**What changed in 0.4.3 compared with the code checked on macOS (`a92eba7`, 0.4.2.dev0):** documentation, images and repository files (README, this page, CHANGELOG, CONTRIBUTING, SECURITY, issue forms); one more line of installer output (that Homebrew may update itself) and tests that run the installer's Homebrew branch with a stand-in `brew`; the showcase tool can swap the two sides and draws its labels outside the page. No change to the translation engine.
+
+**Scope.** macOS and Linux are maintained here. Windows development and native testing are done by a Windows collaborator; the Windows code paths, tests and retest prompt stay in the repository, and the default CI matrix does not run Windows jobs.
+
+## 0-R5. macOS: the installer's Homebrew path, run for real (2026-11-13)
+
+**Run (Codex, the user's Mac, commit `a92eba7`, system bash 3.2.57, default `LC_ALL=C.UTF-8`).** `install.sh --source . --no-modify-path` into a temporary prefix, twice, choosing the mirror at the prompt. Both runs completed the five steps; install, version check and uninstall returned 0. Report private.
+
+| Observation | Detail |
+|---|---|
+| Fonts missing → installed | first run, 105 s: the casks `font-noto-sans-cjk` 2.004 and `font-noto-serif-cjk` 2.003 were installed. Their files come from GitHub (the cask metadata points there), as the installer says |
+| Fonts present → skipped | second run, 29 s: "Noto Sans/Serif CJK fonts are already installed: not downloaded again" |
+| Mirror for Homebrew | the log shows a real download from `mirrors.tuna.tsinghua.edu.cn/homebrew-bottles` (portable Ruby). Homebrew's own Git remote was still `github.com/Homebrew/brew` afterwards: the mirror applied to the run only |
+| Tesseract | "already installed and up-to-date" both times (5.5.4, English data present), so no Tesseract bottle was downloaded and its download address was **not** observed |
+| Side effect | the first `brew install` made Homebrew update itself (7.0.3 → 7.0.13). This is a change to the machine outside the temporary install and it stays |
+
+**Follow-up in 0.4.3.** The installer now says before the Homebrew step that Homebrew may update itself and that this update stays. The Homebrew branch is covered by tests that replace `uname` and `brew` with stand-ins: the calls made, the mirror variables for `brew` with `--mirror cn` and their absence with `--mirror official`, and the font check. These tests describe what the script asks Homebrew to do; what Homebrew then does is covered only by the run above.
 
 ## 0-R4. macOS check of a92eba7 (v0.4.2.dev0): installer fix confirmed (2026-11-13)
 
@@ -174,21 +196,21 @@ Skips seen: Windows lock (POSIX jobs), 5 OCR tests (no-OCR jobs), legacy-locale 
 | P0 (review): `preflight.py` printed `.pth` bytes as hex and absolute interpreter/site-packages paths; the macOS prompt asked for `xxd` output and "copy verbatim" | Hex of a path is the path. | Default output describes `.pth` lines by structure (bytes, UTF-8 validity, CJK chars, spaces, short salted hash) and replaces interpreter/site-packages/error paths; `--private-details` (opt-in, with a warning) shows raw data for local use. Tests check that plain, UTF-8/UTF-16 hex, escapes, URL-quoted and file-URL forms of a secret path and user name do not appear, and that ordinary URLs and error messages survive. `test_osenv` no longer prints the absolute `site.py` path. Prompts no longer ask for hex or raw paths. Redaction is best effort. | Fixed |
 | P1 (review): `install_check.py --pip-args` split on whitespace | Paths with spaces became several arguments. | New repeatable `--pip-arg=ARG` (one argv element each, no shell). Old `--pip-args` accepted only for plain flags; refused (exit 2, nothing created) when it contains quotes or path-like values. Fake-pip tests check the exact argv, Chinese/space wheelhouse paths and exit-code passthrough. | Fixed |
 
-## 0-W. Readiness criteria for macOS/Linux (formerly: gate for the Windows stage)
+## 0-W. Readiness criteria for macOS/Linux
 
-Windows is now handled by the collaborator in parallel (§0-WIN); these criteria describe when the macOS/Linux scope is done.
+These criteria describe when the macOS/Linux scope of this stage is done. Windows is handled by the collaborator in parallel (§0-WIN).
 
-| Criterion | State (2026-11-08) |
+| Criterion | State (2026-11-13) |
 |---|---|
-| CI of the candidate green on all Linux/macOS jobs (7), every skip explained | **Not yet**: v0.3.8 has not run in CI (`c6c9ed5`: 7/7 Linux/macOS passed) |
-| macOS 3.11 and 3.12 fresh install from the candidate, with and without OCR, Chinese/space paths, preflight, offline workflow, interrupt/resume, Preview replacement | **Not yet** (prompt ready: `docs/testing/MACOS_RETEST_PROMPT.md`) |
-| Linux fresh install and offline workflow on a real machine (not only containers/CI) | **Partly**: container + CI only (prompt: `docs/testing/LINUX_RETEST_PROMPT.md`) |
-| OCR present/absent and font missing give clear statuses, never a silent `pass` | Covered by tests on Linux/CI; to be confirmed on the Mac |
-| Interrupted runs leave consistent state and resume | Real SIGINT/SIGKILL test on Linux (§4); Mac pending |
-| Privacy: no local paths in reports, diagnostics or retest feedback | Tests on Linux; best effort |
-| At least a few licence-clear real PDFs with reviewed comparisons | **Not yet** (rules and validator only) |
-| Known gaps listed: Mac Intel (CI only), Linux x64 (CI only), legacy locales on macOS (user machine only) | Listed here |
-| One-line installer (`install.sh`) completes a **full** install (fonts, Tesseract + eng, OpenCV) on macOS and Debian/Ubuntu | **Partly**: see §0-I |
+| CI of the candidate green on all Linux/macOS jobs (7), every skip explained | **Not yet**: no run after `c6c9ed5` (7/7 there) |
+| macOS fresh install from the candidate, offline workflow, interrupt/resume, Preview | **Yes on one Mac**, Python 3.12, with OCR (§0-R2 to §0-R5). Not run: Python 3.11, without OCR, Chinese/space paths for this version |
+| Linux fresh install and offline workflow on a real machine (not only containers/CI) | **Partly**: container only |
+| OCR present/absent and font missing give clear statuses, never a silent `pass` | Covered by tests on Linux and macOS |
+| Interrupted runs leave consistent state and resume | Linux tests; SIGINT and resume checked on the Mac (§0-R2 run, C25/C26) |
+| Privacy: no local paths in reports, diagnostics or retest feedback | Tests on Linux and macOS; best effort |
+| At least a few licence-clear real PDFs with reviewed comparisons | **Yes**: seven documents (§0-P, §0-Q), layout regressions in the suite |
+| Known gaps listed: Mac Intel, Linux x64 (CI only), legacy locales on macOS | Listed in "At a glance" |
+| One-line installer completes a **full** install (fonts, Tesseract + eng, OpenCV) on macOS and Debian/Ubuntu | **macOS: yes, once** (§0-R5). Debian/Ubuntu system packages: not run on a real machine |
 
 Meeting these criteria does not mean "production ready".
 
@@ -212,7 +234,8 @@ What it does, in order (each step is printed first): system packages (macOS: Hom
 | `tests/test_install_script.py` (static rules, help/argument errors create nothing, uninstall safety, real offline venv install from a staged copy) | Yes, including preservation of an existing command and rollback after a failed upgrade |
 | CI step "One-line installer" on every Linux/macOS job: `install.sh --source . --no-system` with the job's Python, expects exit 0 with OCR and 2 without, then `--uninstall` | Added; **not yet run** |
 | Apple Silicon Mac, system Bash 3.2 and Python 3.12.16: piped local install with `--no-system`, offline wheels, local Noto fonts and existing Tesseract | Doctor returned 0. The missing-dependencies case returned 2. Failed upgrade restored the previous CLI, and uninstall removed it. |
-| Fresh Homebrew setup, macOS Intel | **Not yet** |
+| Existing Homebrew on Apple Silicon: full install including system packages | Yes, once (§0-R5, 2026-11-13) |
+| A Mac without Homebrew (the installer installs it after asking), macOS Intel | **Not yet** |
 | Fedora (`dnf`), Arch (`pacman`), openSUSE (`zypper`) package names | From the distributions' package lists; **not run** |
 
 ## 0-R. v0.3.5 (`07ed2df`) on CI and real machines, and what v0.3.6 changes

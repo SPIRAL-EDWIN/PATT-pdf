@@ -290,6 +290,8 @@ install_system_macos() {
   ensure_homebrew
   step 1 "system components with Homebrew (fonts, Tesseract)" "用 Homebrew 安装系统组件（字体、Tesseract）"
   export HOMEBREW_NO_INSTALL_CLEANUP=1      # brew may still update itself first: current bottles need a current brew
+  note "$(L "Homebrew may first update itself (its program and package lists). That update stays on this machine after the install." \
+            "Homebrew 可能会先更新它自己（程序和软件包列表）。这项更新在安装结束后仍会保留在本机。")"
   if [ "$MIRROR" = cn ]; then
     # for these brew calls only; an existing Homebrew is not reconfigured
     export HOMEBREW_API_DOMAIN="$TUNA/homebrew-bottles/api" HOMEBREW_BOTTLE_DOMAIN="$TUNA/homebrew-bottles"

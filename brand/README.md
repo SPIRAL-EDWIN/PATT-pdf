@@ -8,7 +8,8 @@ are distributed under the project's AGPL-3.0-or-later license; see
 [LICENSE](../LICENSE). The wordmark's visual style was inspired by OpenCode;
 PATT-PDF is not affiliated with or endorsed by the OpenCode project.
 
-See **`logo-preview.png`** for an overview on light and dark backgrounds.
+See **`logo-preview.png`** for an overview on light and dark backgrounds. A 1280 × 640
+social-preview image for the repository settings is in `docs/showcase/social-preview.jpg`.
 
 The mark has two parts: an **icon** (a PDF page split by a black diagonal, with a red
 source line on the upper-left and its green translated line on the lower-right of the
