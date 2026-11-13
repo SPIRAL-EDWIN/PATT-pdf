@@ -122,3 +122,14 @@ def test_suite_collects_without_posix_only_signals(tmp_path):
     out = (r.stdout + r.stderr).decode("utf-8", "replace")
     assert r.returncode == 0 and "errors during collection" not in out and "error during collection" not in out, out[-2000:]
     assert "test_interrupted_render_leaves_consistent_state_and_resumes[SIGKILL]" in out
+
+
+def test_real_document_step_runs_on_linux_and_macos_and_keeps_pdfs_out_of_the_checkout(wf):
+    inc = wf["jobs"]["test"]["strategy"]["matrix"]["include"]
+    with_corpus = {e["os"].split("-")[0] for e in inc if e.get("corpus")}
+    assert with_corpus == {"ubuntu", "macos"}
+    step = next(s for s in wf["jobs"]["test"]["steps"] if "Real-document" in s.get("name", ""))
+    run = step["run"]
+    assert "matrix.corpus" in step["if"]
+    assert 'PATT_CORPUS_DIR="$RUNNER_TEMP/' in run                       # cache outside the repository
+    assert "corpus_fetch.py" in run and "corpus_check.py" in run and "tests/test_real_corpus.py" in run and "-rs" in run

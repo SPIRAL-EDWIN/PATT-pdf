@@ -1,5 +1,6 @@
-# Offline test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual
-# backends only.
+# Test matrix for PATT-PDF. No secrets, no translation API: synthetic PDFs, fake/manual backends.
+# The test suite itself is offline. One extra step on two jobs (matrix.corpus) downloads seven
+# public documents listed in tests/corpus/MANIFEST.json and runs layout regressions on them.
 #
 # SCOPE (user decision, 2026-11-08): this default matrix covers Linux and macOS only. Windows
 # development and native testing are done by a Windows collaborator; the Windows matrix entries
@@ -51,9 +52,9 @@ jobs:
       matrix:
         include:
           # with OCR (Tesseract + eng), one per OS/CPU
-          - {os: ubuntu-24.04,     python: "3.12", ocr: true}
+          - {os: ubuntu-24.04,     python: "3.12", ocr: true, corpus: true}
           - {os: ubuntu-24.04-arm, python: "3.12", ocr: true}
-          - {os: macos-15,         python: "3.12", ocr: true}
+          - {os: macos-15,         python: "3.12", ocr: true, corpus: true}
           - {os: macos-15-intel,   python: "3.11", ocr: true}
           # without OCR: Tesseract must be verifiably absent (see "Verify OCR state")
           - {os: ubuntu-24.04,     python: "3.10", ocr: false}
@@ -172,6 +173,17 @@ jobs:
         run: pwsh -NoProfile -NonInteractive -File tools/test_run_logged.ps1
       - name: Tests
         run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit.xml
+      # ---- real documents: fetched into a cache outside the checkout (SHA-256 checked), never
+      # committed. Network use is limited to this step; a document whose publisher changed the
+      # file is rejected and its tests are skipped (visible in the -rs output), not failed.
+      - name: Real-document layout regressions (downloaded corpus, pseudo backend, no API)
+        if: ${{ !cancelled() && matrix.corpus }}
+        run: |
+          export PATT_CORPUS_DIR="$RUNNER_TEMP/patt-corpus"
+          rc=0; python tools/corpus_fetch.py || rc=$?
+          echo "corpus_fetch exit code: $rc (1 = at least one document unavailable or changed upstream)"
+          python tools/corpus_check.py tests/corpus "$PATT_CORPUS_DIR"
+          python -m pytest -q -p no:cacheprovider -rs tests/test_real_corpus.py
       - name: Console-encoding and fixture regressions in a non-ASCII temp folder (R01)
         if: ${{ !cancelled() }}
         run: |
