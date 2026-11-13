@@ -11,22 +11,33 @@ import pymupdf
 from .grouping import _group_cells, _para_to_unit, _rgb, _uid, mark_rows
 from .keep import BOLD_HINT, HAS_LATIN, SEP_CHARS, font_family, is_keep
 from .model import PagePlan, Unit
+from .tables import line_cuts
 
-def _pieces(line):
-    """rawdict line -> list of pseudo-spans, split at visual separators like '|'."""
+def _pieces(line, cuts=()):
+    """rawdict line -> list of pseudo-spans, split at visual separators like '|' and at
+    table-cell boundaries (`cuts`: x positions from tables.line_cuts)."""
     out = []
     spans = line["spans"]
+    last_ink = None                       # right edge of the last non-space character of the line
     for si, sp in enumerate(spans):
         cur = []
+        cut_next = [False]
         def flush():
             if cur:
                 t = "".join(c["c"] for c in cur)
                 r = pymupdf.Rect(cur[0]["bbox"])
                 for c in cur[1:]: r |= c["bbox"]
                 out.append(dict(text=t, bbox=tuple(r), size=sp["size"], font=sp["font"], flags=sp["flags"],
-                                color=sp["color"], origin=cur[0]["origin"], sep=t.strip() in SEP_CHARS))
+                                color=sp["color"], origin=cur[0]["origin"], sep=t.strip() in SEP_CHARS,
+                                cut=cut_next[0]))
+                cut_next[0] = False
         prev = None
         for ch in sp["chars"]:
+            if cuts and ch["c"].strip():
+                if last_ink is not None and any(last_ink - 0.5 <= x <= ch["bbox"][0] + 0.5 for x in cuts):
+                    while cur and not cur[-1]["c"].strip(): cur.pop()      # the space belongs to neither cell
+                    flush(); cur = []; cut_next[0] = True; prev = None
+                last_ink = ch["bbox"][2]
             if ch["c"] in SEP_CHARS:
                 flush(); cur = [ch]; flush(); cur = []
             else:
@@ -44,10 +55,12 @@ def plan_text_page(pg, pno):
     d = pg.get_text("rawdict", flags=pymupdf.TEXT_MEDIABOX_CLIP)
     cells, keeps, rotated, rot_ends = [], [], [], []
     line_keep_cands = []
+    cuts = line_cuts(pg, d)                 # table cells, see tables.py
     for bi, b in enumerate(d["blocks"]):
         if b.get("type") != 0: continue
-        for l in b["lines"]:
-            spans = _pieces(l)
+        for li, l in enumerate(b["lines"]):
+            tinfo = cuts.get((bi, li)) or {"cuts": (), "L": False, "R": False}
+            spans = _pieces(l, tinfo["cuts"])
             if not spans: continue
             if abs(l["dir"][1]) > 0.05:      # rotated label -> own unit, drawn along the same angle
                 t = re.sub(r"\s+", " ", "".join(s["text"] for s in spans)).strip()
@@ -78,15 +91,17 @@ def plan_text_page(pg, pno):
             groups, cur = [], [spans[0]]
             for s in spans[1:]:
                 gap = s["bbox"][0] - cur[-1]["bbox"][2]
-                if (gap > 1.6 * max(s["size"], cur[-1]["size"]) or s["sep"] or cur[-1]["sep"]
+                if (gap > 1.6 * max(s["size"], cur[-1]["size"]) or s["sep"] or cur[-1]["sep"] or s.get("cut")
                         or abs(s["size"] - cur[-1]["size"]) > 0.35 * cur[-1]["size"]):
                     groups.append(cur); cur = [s]
                 else:
                     cur.append(s)
             groups.append(cur)
             for gi, g in enumerate(groups):
-                sepL = gi > 0 and groups[gi - 1][-1].get("sep")
-                sepR = gi + 1 < len(groups) and groups[gi + 1][0].get("sep")
+                # a table-cell boundary separates like a drawn separator: never re-joined later
+                sepL = (gi > 0 and (groups[gi - 1][-1].get("sep") or g[0].get("cut"))) or (gi == 0 and tinfo["L"])
+                sepR = ((gi + 1 < len(groups) and (groups[gi + 1][0].get("sep") or groups[gi + 1][0].get("cut")))
+                        or (gi + 1 == len(groups) and tinfo["R"]))
                 text = g[0]["text"]
                 for a_, b_ in zip(g, g[1:]):
                     gap_ = b_["bbox"][0] - a_["bbox"][2]
