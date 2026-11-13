@@ -1,7 +1,8 @@
 """Command line interface: ``patt-pdf <command> ...``.
 
-All commands take ``SRC`` (a PDF file or a folder of PDFs, read-only) and ``--state DIR``
-(private working directory: plans, translation memory, ledger, rendered output, QA).
+``patt-pdf run SRC`` does everything in one go. The other commands are its single steps;
+they take ``SRC`` (a PDF file or a folder of PDFs, read-only) and ``--state DIR`` (private
+working directory: plans, translation memory, ledger, rendered output, QA).
 
 Translation identity: `estimate`, `translate`, `render` and `publish` select cached
 translations by backend + configuration (``--backend``, ``--manual-tm``, ``--glossary``).
@@ -291,6 +292,11 @@ def cmd_doctor(a):
     return rc
 
 
+def _cmd_run(a):
+    from .runcmd import cmd_run
+    return cmd_run(a)
+
+
 def build_parser():
     ap = argparse.ArgumentParser(prog="patt-pdf", description="Position-aware EN→ZH PDF translation (PATT-PDF, experimental)",
                                  epilog="exit codes: 0 complete, 1 error, 2 incomplete/refused/fail, 3 needs review")
@@ -345,6 +351,23 @@ def build_parser():
     identity(p)
     p.add_argument("--no-ocr-qa", action="store_true", help="skip OCR residual check (pages become 'unverified')")
     p.set_defaults(fn=cmd_render)
+
+    p = sub.add_parser("run", help="everything in one go: analyse, estimate, ask, translate, render, copy to --out")
+    p.add_argument("src", help="PDF file or folder of PDFs (read-only)")
+    p.add_argument("--out", default="translated", help="folder for the translated PDFs (default: ./translated)")
+    p.add_argument("--state", default="patt-work", help="working folder, reused to resume (default: ./patt-work)")
+    p.add_argument("--files", help="glob filter on relative paths, e.g. 'reports/2026/*'")
+    pages(p); quiet(p)
+    p.add_argument("--backend", default="deepl", choices=["deepl", "manual", "pseudo"])
+    p.add_argument("--manual-tm", help="JSON {source: translation} for the manual backend")
+    p.add_argument("--glossary", help="TSV glossary (DeepL)")
+    p.add_argument("--max-chars", type=int, default=None,
+                   help="hard limit of characters sent (default: the estimate, after you confirm it)")
+    p.add_argument("--yes", action="store_true", help="do not ask; needs --max-chars for a paid service")
+    p.add_argument("--workers", type=int, default=0, help="processes for pages that need OCR (default: up to 4)")
+    p.add_argument("--no-ocr", action="store_true", help="do not use OCR (scanned pages will fail)")
+    p.add_argument("--suffix", default="", help="added to output file names, e.g. ' zh-Hans'")
+    p.set_defaults(fn=_cmd_run)
 
     p = common(sub.add_parser("report", help="Markdown QA report")); p.add_argument("--out"); p.set_defaults(fn=cmd_report)
 
