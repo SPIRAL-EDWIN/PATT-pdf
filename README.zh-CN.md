@@ -66,7 +66,7 @@ fail    paper.pdf   2 页：1 pass · 1 fail  数字或网址与原文不一致 
 
 ## 实际效果如何？
 
-7 份公开文档共 14 页的结果（DeepL，v0.4.0.dev0，Linux），按 PATT 自己的检查评定：
+7 份公开文档共 14 页的结果（DeepL，用 v0.4.0.dev0 在 Linux 上测得），按 PATT 自己的检查评定：
 
 | 文档 | 页数 | 结果 | 未全部通过的原因 |
 |---|---|---|---|
@@ -79,7 +79,7 @@ fail    paper.pdf   2 页：1 pass · 1 fail  数字或网址与原文不一致 
 
 `fail` 通常表示这一页有一处需要人看，不等于整页不能用。`pass` 表示检查没有发现问题，不保证译文正确。使用前请对照原文。完整记录见 [docs/STATUS.md](docs/STATUS.md)。
 
-**目前还做不到：** 只支持英文 → 简体中文 · 图片里的文字不翻译 · 沿曲线排列的文字（地图标注）保留英文 · 行内斜体和链接颜色会丢失 · 公式可能出错 · 表格按单元格翻译但不重排 · 没有图形界面 · 目前只在 Linux 上验证过，macOS 核查待完成，Windows 由协作者单独维护。
+**目前还做不到：** 只支持英文 → 简体中文 · 图片里的文字不翻译 · 沿曲线排列的文字（地图标注）保留英文 · 行内斜体和链接颜色会丢失 · 公式可能出错 · 表格按单元格翻译但不重排 · 没有图形界面 · 已在 Linux（aarch64）和一台 Apple Silicon Mac 上核查；安装器的 Homebrew 部分和 Intel Mac 尚未验证，Windows 由协作者单独维护。
 
 ## 隐私与费用
 
@@ -87,7 +87,7 @@ fail    paper.pdf   2 页：1 pass · 1 fail  数字或网址与原文不一致 
 
 ## 文档
 
-[安装](docs/INSTALL.zh-CN.md) · [参考文档](docs/REFERENCE.md) · [状态与验证](docs/STATUS.md) · [架构](docs/ARCHITECTURE.md)
+[安装](docs/INSTALL.zh-CN.md) · [参考文档](docs/REFERENCE.md) · [状态与验证](docs/STATUS.md) · [更新记录](CHANGELOG.md) · [架构](docs/ARCHITECTURE.md)
 
 ```bash
 python -m pip install -e '.[dev]' && python -m pytest -q      # 开发

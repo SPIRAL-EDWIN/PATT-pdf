@@ -66,7 +66,7 @@ Your PDFs are never written to. Nothing is sent before you confirm, and never mo
 
 ## How well does it work?
 
-Results on 14 pages from 7 public documents (DeepL, v0.4.0.dev0, Linux), rated by PATT's own checks:
+Results on 14 pages from 7 public documents (DeepL, measured with v0.4.0.dev0 on Linux), rated by PATT's own checks:
 
 | Document | Pages | Result | Why not all pass |
 |---|---|---|---|
@@ -79,7 +79,7 @@ Results on 14 pages from 7 public documents (DeepL, v0.4.0.dev0, Linux), rated b
 
 A `fail` usually means one item on the page needs a look, not that the page is unusable. A `pass` means the checks found nothing; it does not prove the translation is right. Compare with the original before you rely on a page. Full notes: [docs/STATUS.md](docs/STATUS.md).
 
-**Not there yet:** English → Simplified Chinese only · text inside images stays English · text that follows a curve (map labels) stays English · inline italics and link colours are lost · formulas can break · tables are cut into cells but not re-flowed · no graphical interface · verified on Linux only so far; macOS checks are pending, and Windows is maintained separately.
+**Not there yet:** English → Simplified Chinese only · text inside images stays English · text that follows a curve (map labels) stays English · inline italics and link colours are lost · formulas can break · tables are cut into cells but not re-flowed · no graphical interface · checked on Linux (aarch64) and on one Apple Silicon Mac; the Homebrew part of the installer and Intel Macs are not verified yet, and Windows is maintained separately.
 
 ## Privacy and cost
 
@@ -87,7 +87,7 @@ The work folder stores source text and translations in plain text. DeepL receive
 
 ## Documentation
 
-[Install](docs/INSTALL.md) · [Reference](docs/REFERENCE.md) · [Status and verification](docs/STATUS.md) · [Architecture](docs/ARCHITECTURE.md)
+[Install](docs/INSTALL.md) · [Reference](docs/REFERENCE.md) · [Status and verification](docs/STATUS.md) · [Changes](CHANGELOG.md) · [Architecture](docs/ARCHITECTURE.md)
 
 ```bash
 python -m pip install -e '.[dev]' && python -m pytest -q      # development

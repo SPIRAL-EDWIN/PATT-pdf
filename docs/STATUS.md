@@ -1,15 +1,37 @@
-# Status of v0.4.2.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
+# Status of v0.4.3.dev0 (2026-11-13): experimental test candidate (macOS/Linux scope)
 
-**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.4.2.dev0` (a development pre-release, not a stable release).
+**Milestone vs. version:** the product roadmap calls this stage "v0.2: cross-platform verification". The *package* version continues the existing line and is `0.4.3.dev0` (a development pre-release, not a stable release).
 
 **Scope (user decision, 2026-11-08):** the maintainer's work (Claude) covers **macOS and Linux**. **Windows** development and native testing are done by a **Windows collaborator**. Windows support is not dropped: Windows code paths, Windows-specific tests, the Windows retest prompt and the Windows-only CI steps stay in the repository, but the default CI matrix no longer runs Windows jobs. **This version is not verified on Windows in any way.** Known Windows issues for the collaborator are listed in §0-WIN.
 
 **The stage is NOT complete**, and completing it would not mean production readiness.
 
-**Verified for this version (0.4.2.dev0):** on Linux aarch64 (container), CPython 3.10.12, PyMuPDF 1.28.2, with bash 5.1 and a bash 3.2.57 built from source: full suite 480 passed / 3 skipped with the real-document cache and a setuptools wheelhouse present; ShellCheck 0.10.0 clean. **Not run on macOS**: the two earlier candidates were (§0-R2 for `3f65b2a`, §0-R3 for `9cd953e`), this one is the fix for what the second run found. Not run in CI, not run on Python 3.11 or 3.13.
+**Verified for this version (0.4.3.dev0):** it differs from `0.4.2.dev0` only in documentation, the version number and one comment in `install.sh` (§0-R4). The code of `0.4.2.dev0` (`a92eba7`) was run on Linux aarch64 (container, CPython 3.10.12, bash 5.1 and a source-built bash 3.2.57: 480 passed / 3 skipped; 475 / 8 with Tesseract hidden; ShellCheck 0.10.0 clean) and on the user's Apple Silicon Mac (§0-R4: 482 passed / 1 skipped, all nine installer checks passed). **Not verified:** the Homebrew part of the installer (never run), Intel Macs, a Mac without Homebrew, Fedora/Arch/openSUSE packages, Python 3.11 and 3.13, GitHub Actions for any commit after `703efcd`.
 **CI of the previous public commit `c6c9ed5` (run 42487953018):** Linux 4/4 and macOS 3/3 passed; Windows 0/3 (collection error, §0-WIN). That result belongs to `c6c9ed5`, not to this version.
 
 **Not verified:** this version on macOS (CI or the user's Mac) and on a real Linux machine; Windows (out of scope here); real-world PDFs beyond the twelve pages of §0-P (none in the repository); DeepL beyond those two runs; Preview/Acrobat interaction beyond opening.
+
+## 0-R4. macOS check of a92eba7 (v0.4.2.dev0): installer fix confirmed (2026-11-13)
+
+**macOS run (Codex, the user's Mac: macOS 27.2.1, Apple M5 arm64, system bash 3.2.57, default `LC_ALL=C.UTF-8`, CPython 3.12.16, Tesseract 5.5.4, uv 0.11.21).** Check list `docs/testing/MACOS_V042_CHECK_PROMPT.md`; report private.
+
+| Check | Result |
+|---|---|
+| E1 the failing command of §0-R3, unchanged | PASS: five steps, install / version / uninstall all exit 0 |
+| E2 default environment, E3 four locales (`zh_CN.UTF-8`, `en_US.UTF-8`, `en_US.ISO8859-1`, `C`) | PASS |
+| E4 script copy with a deliberate unbound variable | PASS: "the installer stopped before it finished", exit 1, nothing left behind |
+| E5 full suite | PASS: 482 passed, 1 skipped (Windows-only lock test); installer tests 40 passed |
+| E6 real documents | PASS: 7 of 7 fetched and verified, 16 passed |
+| E7 question on a real terminal, pip, empty caches, one run after the other | PASS: mirror 26.8 s, official sources 51.8 s; both showed "about 85 MB" and per-package progress |
+| E8 `--mirror cn` / `official` / `fastest` | PASS (the last: exit 1, nothing created) |
+| E9 real uv | PASS: step 3 used uv, no fallback to pip; 32.7 s through the mirror |
+| E10 Homebrew part | not run (optional; it changes Homebrew packages on the machine) |
+
+Two exit codes of the first pass (127) came from the tester's own recording script being edited while it ran; both checks were repeated under the same conditions and those results are the ones above. The original records are kept in the private report.
+
+**What this run changes in the documentation, not in the code.** On this machine uv was not faster than pip (32.7 s against 26.8 s, same mirror), so the installer and the install guide no longer say "much faster". The READMEs no longer say "verified on Linux only". `CHANGELOG.md` is new. `0.4.3.dev0` contains no change to the Python package or to the logic of `install.sh`.
+
+**Still not verified after three macOS rounds:** the Homebrew part of the installer (mirror environment for `brew`, installing Homebrew from the mirror, skipping fonts that are already installed), a Mac without Homebrew, Intel Macs; GitHub Actions has not run any commit after `703efcd`.
 
 ## 0-R3. macOS check of 9cd953e: the installer stopped after step 1 and returned 0 (2026-11-13)
 

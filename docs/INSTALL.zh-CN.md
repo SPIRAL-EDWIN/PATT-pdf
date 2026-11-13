@@ -36,6 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/SPIRAL-EDWIN/PATT-pdf/main/install.
 
 五个步骤各自显示序号、下载内容和大致下载量，下载工具显示自己的进度。Python 包约 75–110 MB，因平台而异。如果本机已有 [`uv`](https://docs.astral.sh/uv/)，脚本会用它（并行下载），否则用 pip；脚本不会安装 uv。`--no-uv` 强制使用 pip。
 
+在中国大陆的一台 Apple Silicon Mac 上实测过一次（只含 Python 包，空缓存，先后进行）：pip 走镜像 27 秒、走官方源 52 秒；uv 走镜像 33 秒。只有一台机器、一个晚上的数据，仅供参考，不是基准测试。
+
 想先看再跑？先下载，再运行同一个文件：
 
 ```bash

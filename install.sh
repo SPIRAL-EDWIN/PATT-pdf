@@ -414,9 +414,10 @@ install_package() {
   REPLACE_VENV=1
   "$py" -m venv "$venv" </dev/null || die "could not create the virtual environment (on Debian/Ubuntu: sudo apt install python3-venv)"
   export PIP_DISABLE_PIP_VERSION_CHECK=1
-  # uv downloads in parallel and is much faster than pip. It is used when it is already on
-  # this machine; it is never installed by this script. --pip-arg options are pip's, so pip
-  # is used when any are given.
+  # uv downloads the packages in parallel. It is used when it is already on this machine and
+  # never installed by this script. (One measurement on a fast connection showed no gain
+  # over pip: 33 s against 27 s; the gain is expected on slow or lossy connections.)
+  # --pip-arg options are pip's, so pip is used when any are given.
   if [ "$USE_UV" = 1 ] && [ "${#PIP_ARGS[@]}" = 0 ] && command -v uv >/dev/null 2>&1; then uv="$(command -v uv)"; fi
   if [ -n "$uv" ]; then
     note "$(L "installer: uv (found on this machine; parallel downloads)" "安装工具：uv（本机已有，并行下载）")"

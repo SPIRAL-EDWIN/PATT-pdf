@@ -36,6 +36,8 @@ Before it downloads anything the script says where from and asks:
 
 Each of the five steps prints its number, what it downloads and roughly how much; the download tools show their own progress. The Python packages are about 75–110 MB depending on the platform. If [`uv`](https://docs.astral.sh/uv/) is already on your machine the script uses it (parallel downloads); otherwise it uses pip. It never installs uv. `--no-uv` forces pip.
 
+Measured once on an Apple Silicon Mac in mainland China (Python packages only, empty caches, one run after the other): mirror 27 s, official sources 52 s with pip; 33 s with uv through the mirror. One machine and one evening: an indication, not a benchmark.
+
 Prefer to read before running? Download first, then run the same file:
 
 ```bash

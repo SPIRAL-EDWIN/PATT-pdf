@@ -1,6 +1,6 @@
 # Real-PDF regression corpus
 
-**Status (v0.4.0.dev0, 2026-11-13):** seven public documents are listed in
+**Status (2026-11-13):** seven public documents are listed in
 `tests/corpus/MANIFEST.json`. The PDFs themselves are **not** in the repository. They are
 downloaded into a local cache by `tools/corpus_fetch.py`, which checks SHA-256 and size
 against the manifest. Without the cache the real-document tests are skipped; the default

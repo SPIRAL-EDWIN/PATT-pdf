@@ -1,5 +1,7 @@
 # 给 macOS 上 Codex 的核查提示词：PATT-PDF v0.4.2.dev0（第三轮）
 
+> 本轮已在 `a92eba7` 上完成，E1–E9 全部通过（结果见 `docs/STATUS.md` §0-R4）。下一轮请使用 `docs/testing/MACOS_V043_CHECK_AND_PUSH_PROMPT.md`。
+
 > 本文件可整篇复制到一个新对话中直接使用。
 >
 > 任务是**在这台 Mac 上核查安装器的修复并如实报告**。不要修改项目源码，不要提交或推送，不要调用付费翻译服务。
