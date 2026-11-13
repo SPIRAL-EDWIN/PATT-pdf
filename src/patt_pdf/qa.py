@@ -29,7 +29,7 @@ _RANGE = re.compile(r"(?i)([$€£]\s?\d[\d,.]*)\s*(?:to|-|–)\s*[$€£]?\s?\d
 
 # Idioms that contain digits but are not quantities. Extend with care; each entry hides
 # real errors in matching sentences.
-NON_QUANTITY_IDIOMS = [r"catch-\s?22", r"\b\w+ 101\b"]
+NON_QUANTITY_IDIOMS = [r"catch-\s?22", r"\b\w+ 101\b", r"covid-\s?19"]      # "COVID-19" = "新冠"
 
 
 def numbers(s: str):
@@ -170,6 +170,11 @@ def keep_integrity(src_path, out_path, pno, plan, dpi=110, threshold=0.15):
         # slanted text left in place: its upright box also covers neighbours that were translated
         crops = [(k, _crop(sd[pno], k[:4], dpi), _crop(od[pno], k[:4], dpi)) for k in plan.keeps
                  if not str(k[4]).startswith("[rotated]")]
+    # Glyphs of translated text are expected to change. A tall kept box (a drop cap) also covers
+    # part of the lines next to it; that ink is not the kept item's and is left out.
+    gone = [pymupdf.Rect(e) for u in plan.units if getattr(u, "tgt", "") and u.kind != "keep" and not u.angle
+            for e in u.erase]
+    sc = dpi / 72
     for k, a, b in crops:
         if a is None or b is None:
             continue
@@ -177,6 +182,12 @@ def keep_integrity(src_path, out_path, pno, plan, dpi=110, threshold=0.15):
             bad.append([str(k[4])[:20], "shape"]); continue
         bg = np.median(np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]]))
         ink = np.abs(a - bg) > 60
+        kr = pymupdf.Rect(k[:4])
+        for e in gone:
+            if e.intersects(kr):
+                x0, y0 = int((max(e.x0, kr.x0) - kr.x0) * sc), int((max(e.y0, kr.y0) - kr.y0) * sc)
+                x1, y1 = int(np.ceil((min(e.x1, kr.x1) - kr.x0) * sc)), int(np.ceil((min(e.y1, kr.y1) - kr.y0) * sc))
+                ink[max(0, y0):y1, max(0, x0):x1] = False
         if ink.sum() < 3:
             continue
         changed = float((np.abs(a - b)[ink] > 60).mean())

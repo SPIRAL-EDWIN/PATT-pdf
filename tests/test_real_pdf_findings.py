@@ -128,6 +128,7 @@ def test_words_with_digits_are_still_translated(text):
     ("Peter V. Coyle1,2,3", "彼得·V·科伊尔1,2,3"),                                             # affiliation marks
     ("more than 18.4 million people", "1,840多万人口"),
     ("our 65B-parameter model", "我们的65B参数模型"),
+    ("antibody status was used to determine COVID-19 exposure", "抗体状况被用来确定新冠病毒暴露情况"),
 ])
 def test_number_check_accepts_correct_translations(src, tgt):
     assert number_check(src, tgt) == []
@@ -186,3 +187,41 @@ def test_indented_line_after_a_period_still_starts_a_new_paragraph(tmp_path):
     plan_file(ws, "indent.pdf", ocr=False)
     units = _plan_units(ws, "indent.pdf")
     assert len(units) == 2, [u.src for u in units]
+
+
+# ------------------------------------------------------------------ drop caps
+def test_drop_cap_next_to_translated_lines_is_not_reported_as_changed(tmp_path, fonts_ready):
+    """A kept drop cap is as tall as two lines; its box also covers the start of the second
+    line. That line is translated, so its ink changes, but the drop cap itself does not."""
+    (tmp_path / "src").mkdir()
+    doc = pymupdf.open(); pg = doc.new_page(width=420, height=300)
+    pg.insert_text((60, 118), "U", fontsize=40, fontname="tibi", color=(0.45, 0.45, 0.45))
+    pg.insert_text((92, 96), "sing information from", fontsize=11, fontname="helv")
+    pg.insert_text((92, 110), "recent earthquakes and", fontsize=11, fontname="helv")
+    pg.insert_text((58, 130), "improved mapping of faults", fontsize=11, fontname="helv")    # its top reaches into the U box
+    doc.save(tmp_path / "src" / "cap.pdf"); doc.close()
+    with pymupdf.open(tmp_path / "src" / "cap.pdf") as d:
+        cap = d[0].search_for("U", clip=pymupdf.Rect(55, 70, 92, 135))[0]
+        line3 = d[0].search_for("improved")[0]
+        assert line3.y0 < cap.y1 and line3.y1 > cap.y1                    # the boxes overlap, the glyphs do not
+    ws, qa, _ = _run(tmp_path, "cap.pdf", {"sing information from recent earthquakes and": "基于近期地震的数据以及",
+                                           "sing information from": "基于近期地震的数据", "recent earthquakes and": "以及",
+                                           "improved mapping of faults": "对活动断层更精确的测绘"})
+    issues = [i["issue"] for p in qa["pages"] for i in p["issues"]]
+    assert "keep_changed" not in issues, qa["pages"][0]["issues"]
+    with pymupdf.open(ws.out_path("cap.pdf")) as o:
+        assert "U" in o[0].get_text() and "测绘" in o[0].get_text()
+
+
+def test_a_kept_figure_that_really_changes_is_still_reported(tmp_path, fonts_ready):
+    from patt_pdf.model import PagePlan, Unit
+    from patt_pdf.qa import keep_integrity
+    a, b = tmp_path / "a.pdf", tmp_path / "b.pdf"
+    for path, txt in ((a, "1,250"), (b, "9,863")):
+        d = pymupdf.open(); pg = d.new_page(width=300, height=200); pg.insert_text((60, 100), txt, fontsize=14, fontname="helv")
+        d.save(path); d.close()
+    with pymupdf.open(a) as d:
+        box = list(d[0].search_for("1,250")[0])
+    unit = Unit(uid="u", page=0, kind="text", src="x", bbox=[200, 20, 280, 40], lines=[[200, 20, 280, 40, 36]], size=10,
+                bold=False, family="sans", color=[0, 0, 0], erase=[[200, 20, 280, 40]], tgt="译")
+    assert keep_integrity(a, b, 0, PagePlan(0, "text", [unit], [box + ["1,250"]]))

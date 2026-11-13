@@ -48,7 +48,9 @@ def fit_unit(u, page_rect, obstacles=()):
     width = x1 - x0; height = y1 - y0
     tries = [(width, height)]
     if n0 == 1:   # allow extension to the right (free space checked by caller)
-        free_r = min([o[0] for o in obstacles if o[0] >= x1 - 0.5 and o[1] < y1 and o[3] > y0] + [page_rect.x1 - 18])
+        right = [o[0] for o in obstacles if o[0] >= x1 - 0.5 and o[1] < y1 and o[3] > y0]
+        # stop short of the neighbour (a table cell, a label): text that touches it reads as one word
+        free_r = min([o - 0.35 * u.size for o in right] + [page_rect.x1 - 18])
         if free_r > x1 + 2: tries.append((free_r - x0, height))
     s = u.size
     while s >= 0.55 * u.size:

@@ -127,3 +127,21 @@ def test_list_of_short_lines_is_not_a_table():
         pg.insert_text((70, 100 + 14 * i), t, fontsize=10, fontname="helv")
     info = line_cuts(pg, pg.get_text("rawdict"))
     assert not any(v["cuts"] or v["L"] or v["R"] for v in info.values())
+
+
+def test_a_wide_translation_stops_short_of_the_next_cell(fonts_ready):
+    """Real case: "批处理大小" grew to the right until it touched "n 个令牌" and read as one word."""
+    from patt_pdf import fonts as F
+    from patt_pdf.model import Unit
+    from patt_pdf.typeset import fit_unit
+    u = Unit(uid="u", page=0, kind="text", src="batch size", bbox=[100, 90, 144, 102], lines=[[100, 90, 144, 102, 100]],
+             size=10, bold=False, family="sans", color=[0, 0, 0], tgt="批处理大小")
+    nxt = [152, 90, 190, 102]
+    fs = F.FontSet([u.tgt]); token = F.activate(fs)
+    try:
+        size, lines, _, box, ok = fit_unit(u, pymupdf.Rect(0, 0, 595, 842), [u.bbox, nxt])
+        width = F.font("sans", False).text_length(lines[0], fontsize=size)
+    finally:
+        F._ACTIVE.reset(token)
+    assert ok and len(lines) == 1
+    assert 100 + width <= nxt[0] - 0.3 * u.size, (width, size)        # a visible gap stays
