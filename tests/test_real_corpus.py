@@ -153,6 +153,30 @@ def test_map_labels_along_curves_stay_and_no_letter_is_erased(rendered):
     lost = [k for k in a if k not in b and not any(x.intersects(pymupdf.Rect(a[k])) for x in straight)]
     assert lost == [], lost
     assert cur[0]["count"] >= 43
+    # v0.4.3 check on macOS: the blue "San Francisco Bay" showed a gap at its "r" and a city
+    # label was printed across it. The label must still be ONE span with its own font (not cut,
+    # no letter redrawn), and no translated text may lie on any slanted letter that stayed.
+    def spans(pg):
+        return [("".join(c["c"] for c in sp["chars"]).strip(), sp["font"], sp["bbox"]) for b in pg.get_text("rawdict")["blocks"]
+                for l in b.get("lines", []) if abs(l["dir"][1]) > 0.05 for sp in l["spans"]]
+    with pymupdf.open(r["src"]) as s, pymupdf.open(r["out"]) as o:
+        bay_src = [x for x in spans(s[0]) if x[0].startswith("San Francisco B")]
+        bay_out = [x for x in spans(o[0]) if x[0].startswith("San Francisco B")]
+        assert len(bay_src) == 1 and bay_out == bay_src, (bay_src, bay_out)
+        zh = [pymupdf.Rect(sp["bbox"]) for blk in o[0].get_text("dict")["blocks"] for l in blk.get("lines", [])
+              if abs(l["dir"][1]) <= 0.05 for sp in l["spans"] if re.search(r"[一-鿿]", sp["text"])]
+        kept = [(c["origin"][0], c["origin"][1], c["c"]) for blk in o[0].get_text("rawdict")["blocks"] for l in blk.get("lines", [])
+                if abs(l["dir"][1]) > 0.05 for sp in l["spans"] for c in sp["chars"]
+                if c["c"].strip() and not re.search(r"[一-鿿]", c["c"])]
+    on_top = [(ch, [round(v) for v in z]) for z in zh for x, y, ch in kept if z.x0 < x < z.x1 and z.y0 < y < z.y1]
+    assert on_top == [], on_top[:6]
+    assert not _issues(r, "keep_restored")                               # nothing had to be redrawn
+    # a label with no room beside the curve would keep its source text; here every one fits
+    assert [i["src"] for i in _issues(r, "label_left_source")] == []
+    srcs = [u.src for u in r["plans"][0].units]
+    for name in ("San Francisco", "Santa Rosa", "Santa Cruz", "Half Moon Bay", "Mill Valley"):   # stacked labels are whole
+        assert name in srcs, name
+    assert not any(x in srcs for x in ("Santa", "Rosa", "Cruz", "Francisco"))
     for word in ("CONCORDFAULT", "BERRYESSA", "SCREEKFAULT", "CAMAFAU", "HUNTIN", "HAYWARD"):      # labels along curves
         assert word in squeeze(before) and squeeze(after).count(word) == squeeze(before).count(word), word
     # Latin words that stay on the page keep every letter (the 'a' of these was erased before)

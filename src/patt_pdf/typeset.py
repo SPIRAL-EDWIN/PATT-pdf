@@ -35,7 +35,7 @@ def _wrap(text, fnt, size, width):
     return lines
 
 
-def fit_unit(u, page_rect, obstacles=()):
+def fit_unit(u, page_rect, obstacles=(), solid=None):
     """Return (fontsize, lines, pitch, box, ok). Shrinks font if needed; may widen
     single-line boxes to the right if free space exists."""
     fnt = font(u.family, u.bold)
@@ -47,6 +47,21 @@ def fit_unit(u, page_rect, obstacles=()):
         pitch_ratio = max(1.05, min(2.0, (bases[-1] - bases[0]) / (n0 - 1) / u.size))
     width = x1 - x0; height = y1 - y0
     tries = [(width, height)]
+    wide = None
+    if n0 in (2, 3) and u.align == "center":
+        # a short label set in centred lines ("San" over "Francisco"): its translation reads
+        # better on one line than broken to the width of the shortest source line
+        need_w = fnt.text_length(u.tgt, fontsize=u.size)
+        if width < need_w <= 3.2 * width and "\n" not in u.tgt:
+            ext = (need_w - width) / 2 + 0.5
+            cand = (x0 - ext, y0, x1 + ext, y1)
+            if cand[0] > page_rect.x0 + 9 and cand[2] < page_rect.x1 - 9 and not any(
+                    o[0] < cand[2] and o[2] > cand[0] and o[1] < y1 and o[3] > y0
+                    and not (o[0] >= x0 - 0.01 and o[2] <= x1 + 0.01 and o[1] >= y0 - 0.01 and o[3] <= y1 + 0.01)
+                    for o in (obstacles if solid is None else solid)):
+                wide = cand
+    if wide is not None:
+        return u.size, [u.tgt], u.size * pitch_ratio, wide, True
     if n0 == 1:   # allow extension to the right (free space checked by caller)
         right = [o[0] for o in obstacles if o[0] >= x1 - 0.5 and o[1] < y1 and o[3] > y0]
         # stop short of the neighbour (a table cell, a label): text that touches it reads as one word

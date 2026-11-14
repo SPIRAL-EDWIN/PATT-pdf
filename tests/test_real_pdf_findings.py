@@ -225,3 +225,139 @@ def test_a_kept_figure_that_really_changes_is_still_reported(tmp_path, fonts_rea
     unit = Unit(uid="u", page=0, kind="text", src="x", bbox=[200, 20, 280, 40], lines=[[200, 20, 280, 40, 36]], size=10,
                 bold=False, family="sans", color=[0, 0, 0], erase=[[200, 20, 280, 40]], tgt="译")
     assert keep_integrity(a, b, 0, PagePlan(0, "text", [unit], [box + ["1,250"]]))
+
+
+# ------------------------------------------------------------------ stacked labels
+def _label_page(path, lines, x_mid=150, y=100, size=9, pitch=None, block_each=False):
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    f = pymupdf.Font("tiro"); pitch = pitch or 0.93 * size
+    if block_each:
+        for i, t in enumerate(lines):
+            pg.insert_text((x_mid - f.text_length(t, fontsize=size) / 2, y + i * pitch), t, fontsize=size, fontname="tiro")
+    else:
+        tw = pymupdf.TextWriter(pg.rect)
+        for i, t in enumerate(lines):
+            tw.append((x_mid - f.text_length(t, fontsize=size) / 2, y + i * pitch), t, font=f, fontsize=size)
+        tw.write_text(pg)
+    d.save(path); d.close()
+
+
+@pytest.mark.parametrize("block_each", [False, True])
+def test_a_place_name_set_in_two_centred_lines_is_one_unit(tmp_path, block_each):
+    """Map labels: "San" over "Francisco", "Santa" over "Rosa". Translated line by line the
+    names fell apart (DeepL returned 圣诞老人, Father Christmas, for the lone "Santa")."""
+    from patt_pdf.jobs import Workspace, plan_file
+    (tmp_path / "src").mkdir()
+    _label_page(tmp_path / "src" / "lab.pdf", ["Santa", "Rosa"], block_each=block_each)
+    ws = Workspace(tmp_path / "src", tmp_path / "state"); plan_file(ws, "lab.pdf", ocr=False)
+    units = _plan_units(ws, "lab.pdf")
+    assert [u.src for u in units] == ["Santa Rosa"] and units[0].align == "center" and len(units[0].lines) == 2
+
+
+@pytest.mark.parametrize("lines,why", [
+    (["Rate", "Size"], "left-aligned lines of similar width are a list, not one label"),
+    (["Total", "Count"], "double leading: rows of a table"),
+    (["Introduction to the methods used in this section", "and their limits"], "a long line is body text"),
+    (["First.", "Second"], "the first line ends a sentence"),
+])
+def test_lines_that_are_not_a_stacked_label_stay_apart(tmp_path, lines, why):
+    from patt_pdf.jobs import Workspace, plan_file
+    (tmp_path / "src").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300); f = pymupdf.Font("tiro")
+    pitch = 20 if lines[0] == "Total" else 8.4
+    for i, t in enumerate(lines):
+        if lines[0] in ("Rate",):
+            x = 100                                               # flush left
+        else:
+            x = 200 - f.text_length(t, fontsize=9) / 2
+        pg.insert_text((x, 100 + i * pitch), t, fontsize=9, fontname="tiro")
+    d.save(tmp_path / "src" / "n.pdf"); d.close()
+    ws = Workspace(tmp_path / "src", tmp_path / "state"); plan_file(ws, "n.pdf", ocr=False)
+    srcs = [u.src for u in _plan_units(ws, "n.pdf")]
+    if lines[0].startswith("Introduction"):
+        assert all(len(u.split()) > 1 for u in srcs)              # however it is grouped, not via the label rule
+        assert not any(u.align == "center" and len(u.lines) == 2 and len(u.src) < 30 for u in _plan_units(ws, "n.pdf"))
+    else:
+        assert srcs == lines, why
+
+
+def test_translated_stacked_label_goes_on_one_line_when_there_is_room(tmp_path, fonts_ready):
+    """ "San" over "Francisco" becomes 旧金山 on one centred line, not broken to the width of
+    the shortest source line."""
+    (tmp_path / "src").mkdir()
+    _label_page(tmp_path / "src" / "one.pdf", ["Santa", "Rosa"])
+    ws, qa, _ = _run(tmp_path, "one.pdf", {"Santa Rosa": "圣罗莎"})
+    assert qa["status"] == "pass", qa["pages"][0]["issues"]
+    with pymupdf.open(tmp_path / "src" / "one.pdf") as s_, pymupdf.open(ws.out_path("one.pdf")) as o:
+        src_words = s_[0].get_text("words")
+        lines = [l for b in o[0].get_text("dict")["blocks"] for l in b.get("lines", [])]
+    assert len(lines) == 1 and "".join(sp["text"] for sp in lines[0]["spans"]).strip() == "圣罗莎"
+    mid_src = (min(w[0] for w in src_words) + max(w[2] for w in src_words)) / 2
+    y_src = (min(w[1] for w in src_words) + max(w[3] for w in src_words)) / 2
+    bb = lines[0]["bbox"]
+    assert abs((bb[0] + bb[2]) / 2 - mid_src) < 1.5                      # centred where the label was
+    assert abs((bb[1] + bb[3]) / 2 - y_src) < 3.0                        # and vertically in its place
+
+
+def test_wide_translation_of_a_stacked_label_does_not_run_into_a_neighbour(tmp_path, fonts_ready):
+    """With something beside the label, the translation stays inside the label's own box."""
+    (tmp_path / "src").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300); f = pymupdf.Font("tiro")
+    tw = pymupdf.TextWriter(pg.rect)
+    for i, t in enumerate(["Point", "Reyes"]):
+        tw.append((150 - f.text_length(t, fontsize=9) / 2, 100 + i * 8.4), t, font=f, fontsize=9)
+    tw.write_text(pg)
+    pg.insert_text((172, 97), "Km 7", fontsize=9, fontname="helv")        # another label right beside it, between the two lines
+    d.save(tmp_path / "src" / "nb.pdf"); d.close()
+    ws, qa, _ = _run(tmp_path, "nb.pdf", {"Point Reyes": "波因特雷耶斯", "Km 7": "7 公里"})
+    with pymupdf.open(ws.out_path("nb.pdf")) as o:
+        spans = [(sp["text"].strip(), sp["bbox"]) for b in o[0].get_text("dict")["blocks"] for l in b.get("lines", []) for sp in l["spans"]]
+    name = [bb for t, bb in spans if t and all("\u4e00" <= ch <= "\u9fff" for ch in t)]
+    other = [bb for t, bb in spans if "公里" in t]
+    assert name and other, spans
+    assert all(bb[2] <= other[0][0] + 0.5 for bb in name), spans          # the name stops before its neighbour
+
+
+def test_bare_item_numbers_start_list_items(tmp_path):
+    """A numbered legend ("13  Pittsburg-Kirby Hills" / "14  Clayton"): a line that ran to the
+    column edge was joined with the next item. A plain number right next to a line starts an
+    item; a number further away (a figure, a map marker) does not."""
+    from patt_pdf.jobs import Workspace, plan_file
+    (tmp_path / "src").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    items = ["Franklin", "Pittsburg-Kirby Hills", "Clayton", "Mt. Diablo North"]
+    tw = pymupdf.TextWriter(pg.rect); f = pymupdf.Font("helv")
+    for i, t in enumerate(items):                                         # one block, tight leading
+        tw.append((52, 100 + i * 10.3), t, font=f, fontsize=9)
+    tw.write_text(pg)
+    for i in range(len(items)):
+        pg.insert_text((40, 100 + i * 10.3), str(12 + i), fontsize=9, fontname="hebo")
+    cap = ["Building damaged in a recent quake. Photograph", "by the survey office, taken in early spring."]
+    tw = pymupdf.TextWriter(pg.rect)
+    for i, t in enumerate(cap):
+        tw.append((200, 200 + i * 11), t, font=f, fontsize=9)
+    tw.write_text(pg)
+    pg.insert_text((176, 211), "23", fontsize=9, fontname="helv")         # a marker 2 em left of the caption's second line
+    d.save(tmp_path / "src" / "list.pdf"); d.close()
+    ws = Workspace(tmp_path / "src", tmp_path / "state"); plan_file(ws, "list.pdf", ocr=False)
+    srcs = [u.src for u in _plan_units(ws, "list.pdf")]
+    for t in items:
+        assert t in srcs, srcs
+    assert " ".join(cap) in srcs, srcs                                    # the caption is not cut at the marker
+
+
+def test_justified_two_line_paragraph_is_not_centred(tmp_path):
+    """A caption of two full-width lines whose first line is indented by a few points has
+    nearly the same midpoint in both lines. It is body text and stays left-aligned; only
+    short label lines are treated as centred."""
+    from patt_pdf.jobs import Workspace, plan_file
+    (tmp_path / "src").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=595, height=400); f = pymupdf.Font("helv")
+    tw = pymupdf.TextWriter(pg.rect)
+    tw.append((74.5, 100), "Figure 1: Training loss over the number of tokens for the", font=f, fontsize=10)
+    tw.append((72, 112), "small, medium and large models that were trained here", font=f, fontsize=10)
+    tw.write_text(pg)
+    d.save(tmp_path / "src" / "cap.pdf"); d.close()
+    ws = Workspace(tmp_path / "src", tmp_path / "state"); plan_file(ws, "cap.pdf", ocr=False)
+    units = _plan_units(ws, "cap.pdf")
+    assert len(units) == 1 and len(units[0].lines) == 2 and units[0].align == "left", [(u.src, u.align) for u in units]

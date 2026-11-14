@@ -46,6 +46,11 @@ def _merge_inline(a, b):
     return m
 
 
+def _next_block(a, b):
+    """True if block id `b` directly follows `a` (ids are integers on text pages)."""
+    return isinstance(a, int) and isinstance(b, int) and b - a == 1
+
+
 def _group_cells(cells, para_gap=0.75):
     """cells: dicts with x0,y0,x1,y1,size,bold,color,text,base,block. -> paragraphs"""
     """mode 'text': strict style equality, PyMuPDF block must match.
@@ -92,6 +97,23 @@ def _group_cells(cells, para_gap=0.75):
                     and (abs(dx) < 1.0 or (len(p) == 1 and 0 < dx < 4 * s))
                     and re.match(r"^[A-Z0-9(\[\"“‘']", nt)):
                 cont = True
+            # A label set in two or three centred lines with almost no leading ("San" over
+            # "Francisco" on a map, a two-line column head) is one text. Translated line by line
+            # it lost its meaning ("Santa" / "Rosa" came back as "Father Christmas" / "Rosa").
+            # Only short lines qualify (a few words each), so body text, whose lines fill a
+            # column, and table rows, which have more leading, are not affected. Producers
+            # store such lines in one block or in consecutive blocks.
+            # (sepL/sepR mark neighbours on the same row and say nothing about the line below.)
+            mid_l, mid_c = (last["x0"] + last["x1"]) / 2, (c["x0"] + c["x1"]) / 2
+            wide = max(last["x1"] - last["x0"], c["x1"] - c["x0"])
+            if (not ocr and same_style and not c.get("bullet") and len(p) < 3
+                    and last.get("color") == c.get("color")
+                    and wide <= 9 * s and len(lt.split()) <= 3 and len(nt.split()) <= 3
+                    and abs(mid_l - mid_c) < 0.12 * s and abs(mid_l - mid_c) < 0.5 * abs(last["x0"] - c["x0"])
+                    and 0.8 * s <= c["base"] - last["base"] <= 1.15 * s
+                    and not re.search(r"[.:;!?]$", lt)
+                    and (same_block or _next_block(last.get("block"), c.get("block")))):
+                p.append(c); continue
             if c.get("bullet"):
                 paras.append([c]); continue
             row_end = last.get("rownum", False)                       # table row with figures
@@ -129,6 +151,9 @@ def _para_to_unit(page, kind, idx, para, family=None):
     if len(para) >= 2:
         cs = [(c["x0"] + c["x1"]) / 2 for c in para]; ls = [c["x0"] for c in para]
         if max(cs) - min(cs) < 2.5 and max(ls) - min(ls) > 6: align = "center"
+        elif (len(para) <= 3 and max(c["x1"] - c["x0"] for c in para) <= 9 * sizes[len(sizes) // 2]
+              and max(cs) - min(cs) < 0.12 * sizes[len(sizes) // 2] and max(cs) - min(cs) < 0.5 * (max(ls) - min(ls))):
+            align = "center"                      # short centred label lines ("San" over "Francisco")
     erase = []
     for c in para: erase.extend(c.get("erase", [[c["x0"], c["y0"], c["x1"], c["y1"]]]))
     return Unit(uid=_uid(page, kind, idx, src), page=page, kind=kind, src=src,
@@ -145,7 +170,12 @@ def mark_rows(cells, keeps):
     for c in cells:
         h = c["y1"] - c["y0"]
         for k in keeps:
-            if BULLET_RE.match(str(k[4]).strip()) and k[2] <= c["x0"] + 1 and c["x0"] - k[2] < 3 * c["size"]:
+            # a bullet or "1." / "a)", or a bare item number ("13  Pittsburg-Kirby Hills"): the
+            # line next to it starts a list item even when the line above ran to the margin
+            mark = str(k[4]).strip()
+            bare = re.fullmatch(r"\d{1,3}", mark) is not None      # close by only: a number 2 em away is a figure
+            if (BULLET_RE.match(mark) or bare) and k[2] <= c["x0"] + 1 \
+                    and c["x0"] - k[2] < (0.9 if bare and not BULLET_RE.match(mark) else 3) * c["size"]:
                 ov = min(c["y1"], k[3]) - max(c["y0"], k[1])
                 if ov > 0.4 * min(h, k[3] - k[1]): c["bullet"] = True; break
     for c in cells:

@@ -3,18 +3,28 @@
 All versions so far are development pre-releases. What was run, on which machines, and what
 is still unverified is recorded per version in [docs/STATUS.md](docs/STATUS.md).
 
-## 0.4.3.dev0 — 2026-11-13
+## 0.4.4.dev0 — 2026-11-14
 
 First version published after `0.3.8.dev0`; it contains everything listed below.
 
+- **Labels next to curved text.** An upright label crossed by text that follows a curve
+  no longer damages it: the curved letter is not removed and redrawn any more, and the
+  translation is not printed over it. A label with no room beside the curve keeps its
+  source text and is listed (`label_left_source`).
+- **Place names in two lines** ("San" over "Francisco") are one text, translated as a
+  whole and set on one centred line when it fits.
+- **Numbered legends:** a bare number next to a line starts a list item.
+- Showcase images re-made. Engine `patt-0.4-e3`: plans are re-made.
+
+## 0.4.3.dev0 — 2026-11-13 (not published)
+
 - **Checked on macOS as well.** Three rounds on an Apple Silicon Mac, including one complete
   install through Homebrew. The READMEs and `docs/STATUS.md` say what was run where.
-- **Front page.** New showcase images for light and dark themes; the language tags no
-  longer cover the pages; the map page is re-made with the current engine. Results and
-  limits are separate sections.
+- **Front page.** Showcase images for light and dark themes; the language tags no longer
+  cover the pages. Results and limits are separate sections.
 - **Installer.** Says that Homebrew may update itself before installing; no longer claims
-  that uv is much faster than pip (one measurement showed no gain on a fast connection).
-  Its Homebrew branch is now exercised by tests with a stand-in `brew`.
+  that uv is much faster than pip. Its Homebrew branch is exercised by tests with a
+  stand-in `brew`.
 - **Project files.** `CONTRIBUTING.md`, `SECURITY.md`, an issue form and this change log.
 - `tools/diagonal_compare.py`: `--swap N` shows a card with the translation on the left.
 

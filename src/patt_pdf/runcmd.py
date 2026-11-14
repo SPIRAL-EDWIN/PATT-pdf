@@ -50,6 +50,7 @@ REASONS = {
     "text_crosses_rule": ("text crosses a table rule", "文字越过表格线"),
     "translation_left_source": ("a translation was unusable; source text kept", "译文不可用，保留原文"),
     "curved_text_left_english": ("curved text not translated", "弯曲文字未翻译"),
+    "label_left_source": ("a label next to curved text was not translated", "紧邻弯曲文字的标注未翻译"),
 }
 WORDS = {
     "page": ("page", "页"), "pages": ("pages", "页"), "not_written": ("not written", "未输出"),

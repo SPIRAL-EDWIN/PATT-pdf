@@ -68,7 +68,7 @@ patt-pdf run ./in --backend manual --manual-tm tm.json        # offline, fixed t
 
 **Progress and speed.** `plan`, `render` and `run` print progress on stderr (one rewritten line in a terminal, one plain line per file when redirected); `--quiet` turns it off. Pages that need Tesseract (scans, pages with images) are analysed in separate processes: `--workers N`, default the CPU count up to 4.
 
-**Text that is deliberately left as it is.** Text made only of names, codes and figures (`LLaMA 7B`, `GPT-3`, `13.0B`) is not sent. Text set along a curve (map labels) stays in place and is listed as `curved_text_left_english`. A translation that cannot be used (for example the name of the target language appended to it) is repaired, retried once with context, or replaced by the source text (`translation_left_source`, review); it is never drawn.
+**Text that is deliberately left as it is.** Text made only of names, codes and figures (`LLaMA 7B`, `GPT-3`, `13.0B`) is not sent. Text set along a curve (map labels) stays in place and is listed as `curved_text_left_english`; an upright label that has no room next to such text keeps its source text (`label_left_source`). A translation that cannot be used (for example the name of the target language appended to it) is repaired, retried once with context, or replaced by the source text (`translation_left_source`, review); it is never drawn.
 
 ## Quick start (offline, no API)
 

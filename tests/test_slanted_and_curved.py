@@ -181,34 +181,101 @@ def test_a_label_is_not_left_half_translated(tmp_path, fonts_ready):
     assert all(w in text for w in ("HAYWARD", "FAULT", "ZONE")) and "海沃德" not in text
 
 
-def test_translating_an_upright_label_does_not_erase_a_curved_letter_that_crosses_it(tmp_path, fonts_ready):
-    """Seen on the map: the city label "Francisco" was translated and the "r" of the curved
-    "San Francisco Bay", which runs across it, disappeared with it."""
+def _slanted_letters(path):
+    out = []
+    with pymupdf.open(path) as doc:
+        for b in doc[0].get_text("rawdict")["blocks"]:
+            for l in b.get("lines", []):
+                if abs(l["dir"][1]) > 0.05:
+                    out += [(c["c"], round(c["origin"][0]), round(c["origin"][1])) for sp in l["spans"] for c in sp["chars"] if c["c"].strip()]
+    return sorted(out)
+
+
+def _slanted_spans(path):
+    """Text of every slanted span, in page order: a label that was cut shows as several spans."""
+    with pymupdf.open(path) as doc:
+        return ["".join(c["c"] for c in sp["chars"]) for b in doc[0].get_text("rawdict")["blocks"]
+                for l in b.get("lines", []) if abs(l["dir"][1]) > 0.05 for sp in l["spans"]]
+
+
+def _curve(pg, x, y, ang, pieces, step, size=9):
+    f = pymupdf.Font("helv")
+    for piece in pieces:
+        _slanted(pg, (x, y), piece, ang, size=size)
+        adv = f.text_length(piece + " ", fontsize=size)
+        x += adv * math.cos(math.radians(ang)); y -= adv * math.sin(math.radians(ang)); ang += step
+
+
+def test_a_label_crossed_by_curved_text_keeps_its_source_and_the_curve_stays_whole(tmp_path, fonts_ready):
+    """v0.4.3 check on macOS: the city label "Francisco" was translated, the "r" of the curved
+    "San Francisco Bay" that runs through it was removed and redrawn (a visible gap, the label
+    cut into "San F" / "ancisco Bay"), and the Chinese label was printed over the curve.
+    A label with no room beside the curve keeps its source text; the curve is not touched."""
     (tmp_path / "in").mkdir()
     d = pymupdf.open(); pg = d.new_page(width=420, height=300)
     pg.insert_text((100, 150), "Oakland", fontsize=11, fontname="helv")
-    f = pymupdf.Font("helv"); x, y, ang = 104.0, 128.0, -52.0           # a curve that crosses the label
-    for piece in ("Half", "Moon", "Bay"):
-        _slanted(pg, (x, y), piece, ang, size=9)
-        adv = f.text_length(piece + " ", fontsize=9)
-        x += adv * math.cos(math.radians(ang)); y -= adv * math.sin(math.radians(ang)); ang -= 8
+    pg.insert_text((250, 60), "Fremont", fontsize=11, fontname="helv")              # far from the curve
+    f = pymupdf.Font("helv")
+    tw = pymupdf.TextWriter(pg.rect); tw.append((104, 128), "Half Moon Bay", font=f, fontsize=9)
+    tw.write_text(pg, morph=(pymupdf.Point(104, 128), pymupdf.Matrix(-52)))         # one span, through the label
+    adv = f.text_length("Half Moon Bay ", fontsize=9)                               # the label bends after "Bay"
+    _slanted(pg, (104 + adv * math.cos(math.radians(-52)), 128 - adv * math.sin(math.radians(-52))), "Area", -62, size=9)
     d.save(tmp_path / "in" / "cross.pdf"); d.close()
-
-    def slanted_letters(path):
-        out = []
-        with pymupdf.open(path) as doc:
-            for b in doc[0].get_text("rawdict")["blocks"]:
-                for l in b.get("lines", []):
-                    if abs(l["dir"][1]) > 0.05:
-                        out += [(c["c"], round(c["origin"][0]), round(c["origin"][1])) for sp in l["spans"] for c in sp["chars"] if c["c"].strip()]
-        return sorted(out)
-    before = slanted_letters(tmp_path / "in" / "cross.pdf")
-    with pymupdf.open(tmp_path / "in" / "cross.pdf") as doc:
-        label = doc[0].search_for("Oakland")[0]
-        crossing = [c for b in doc[0].get_text("rawdict")["blocks"] for l in b.get("lines", []) if abs(l["dir"][1]) > 0.05
-                    for sp in l["spans"] for c in sp["chars"] if c["c"].strip() and pymupdf.Rect(c["bbox"]).intersects(label)]
-    assert crossing, "fixture: the curved text must cross the upright label"
-    ws, qa, _ = _run(tmp_path, "cross.pdf", {"Oakland": "奥克兰"})
-    assert slanted_letters(ws.out_path("cross.pdf")) == before
+    before, spans = _slanted_letters(tmp_path / "in" / "cross.pdf"), _slanted_spans(tmp_path / "in" / "cross.pdf")
+    assert "Half Moon Bay" in spans
+    ws, qa, _ = _run(tmp_path, "cross.pdf", {"Oakland": "奥克兰", "Fremont": "弗里蒙特"})
+    assert _slanted_letters(ws.out_path("cross.pdf")) == before
+    assert "Half Moon Bay" in _slanted_spans(ws.out_path("cross.pdf"))              # still one span: never cut
     with pymupdf.open(ws.out_path("cross.pdf")) as o:
+        text = o[0].get_text()
+    assert "Oakland" in text and "奥克兰" not in text                                # kept, not printed over the curve
+    assert "弗里蒙特" in text and "Fremont" not in text                              # labels elsewhere are translated
+    issues = qa["pages"][0]["issues"]
+    left = [i for i in issues if i["issue"] == "label_left_source"]
+    assert len(left) == 1 and left[0]["src"] == "Oakland"
+    assert not [i for i in issues if i["issue"] in ("keep_restored", "residual_english")]
+    assert qa["status"] == "review"
+
+
+def test_a_label_beside_curved_text_is_translated_without_touching_it(tmp_path, fonts_ready):
+    """The box of a slanted letter is much larger than its ink. A label that only overlaps
+    such a box (same map: "Oakland" next to the "D" of "HAYWARD") is translated, and the
+    slanted letter is neither removed nor redrawn."""
+    (tmp_path / "in").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    pg.insert_text((120, 150), "Oakland", fontsize=11, fontname="helv")
+    _curve(pg, 92, 118, -55, ["HAY", "WARD"], -6)
+    d.save(tmp_path / "in" / "beside.pdf"); d.close()
+    with pymupdf.open(tmp_path / "in" / "beside.pdf") as doc:
+        label = doc[0].search_for("Oakland")[0]
+        boxes = [pymupdf.Rect(c["bbox"]) for b in doc[0].get_text("rawdict")["blocks"] for l in b.get("lines", [])
+                 if abs(l["dir"][1]) > 0.05 for sp in l["spans"] for c in sp["chars"] if c["c"].strip()]
+    assert any(bx.intersects(label) for bx in boxes), "fixture: a slanted letter's box must overlap the label"
+    before = _slanted_letters(tmp_path / "in" / "beside.pdf")
+    ws, qa, _ = _run(tmp_path, "beside.pdf", {"Oakland": "奥克兰"})
+    assert _slanted_letters(ws.out_path("beside.pdf")) == before
+    with pymupdf.open(ws.out_path("beside.pdf")) as o:
         assert "奥克兰" in o[0].get_text() and "Oakland" not in o[0].get_text()
+    assert not [i for i in qa["pages"][0]["issues"] if i["issue"] in ("keep_restored", "label_left_source")]
+
+
+def test_translation_is_not_printed_over_curved_text(tmp_path, fonts_ready):
+    """A translation wider than its source must not grow into text that follows a curve."""
+    (tmp_path / "in").mkdir()
+    d = pymupdf.open(); pg = d.new_page(width=420, height=300)
+    pg.insert_text((100, 150), "Bay", fontsize=11, fontname="helv")
+    _curve(pg, 128, 124, -62, ["North", "Shore"], -7)                 # passes just right of the short label
+    d.save(tmp_path / "in" / "grow.pdf"); d.close()
+    before = _slanted_letters(tmp_path / "in" / "grow.pdf")
+    ws, qa, _ = _run(tmp_path, "grow.pdf", {"Bay": "旧金山海湾地区"})
+    assert _slanted_letters(ws.out_path("grow.pdf")) == before
+    with pymupdf.open(ws.out_path("grow.pdf")) as o:
+        page = o[0]
+        zh = [pymupdf.Rect(sp["bbox"]) for b in page.get_text("dict")["blocks"] for l in b.get("lines", [])
+              for sp in l["spans"] if any("\u4e00" <= ch <= "\u9fff" for ch in sp["text"])]
+        ink = [(c["origin"][0], c["origin"][1]) for b in page.get_text("rawdict")["blocks"] for l in b.get("lines", [])
+               if abs(l["dir"][1]) > 0.05 for sp in l["spans"] for c in sp["chars"] if c["c"].strip()]
+        text = page.get_text()
+    for r in zh:                                                      # no slanted letter starts inside the Chinese text
+        assert not any(r.x0 <= x <= r.x1 and r.y0 <= y <= r.y1 for x, y in ink), (r, text)
+    assert "旧金山" in text or "Bay" in text                          # translated clear of the curve, or kept

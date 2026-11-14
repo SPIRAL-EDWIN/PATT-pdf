@@ -70,23 +70,139 @@ def screen_units(pg, units):
 
 
 def _slanted_chars(pg, skip=()):
-    """Non-space characters of slanted lines, except those at the positions in `skip`."""
+    """Non-space characters of slanted lines, except those at the positions in `skip`.
+    Each has its upright bounding box ("bbox", what MuPDF tests redactions against) and a few
+    points on the glyph itself ("pts"): the box of a slanted letter is much larger than its ink."""
     out = []
     for b_ in pg.get_text("rawdict", flags=pymupdf.TEXT_MEDIABOX_CLIP)["blocks"]:
         for l_ in b_.get("lines", []):
             if abs(l_["dir"][1]) <= 0.05:
                 continue
+            dx, dy = l_["dir"]
             for sp_ in l_["spans"]:
-                for c_ in sp_["chars"]:
+                chars = sp_["chars"]
+                for i_, c_ in enumerate(chars):
                     if not c_["c"].strip():
                         continue
                     cr = pymupdf.Rect(c_["bbox"])
                     if any(abs(m.x0 - cr.x0) < 0.05 and abs(m.y0 - cr.y0) < 0.05 for m in skip):
                         continue
-                    out.append(dict(c=c_["c"], origin=tuple(c_["origin"]), size=sp_["size"], font=sp_["font"],
-                                    flags=sp_["flags"], color=sp_["color"],
-                                    angle=math.degrees(math.atan2(-l_["dir"][1], l_["dir"][0]))))
+                    ox, oy = c_["origin"]; size = sp_["size"]
+                    adv = 0.5 * size
+                    if i_ + 1 < len(chars):
+                        nx, ny = chars[i_ + 1]["origin"]
+                        adv = min(max(math.hypot(nx - ox, ny - oy), 0.2 * size), 1.1 * size)
+                    pts = [(ox + dx * adv * a + dy * size * h, oy + dy * adv * a - dx * size * h)
+                           for a in (0.05, 0.5, 0.95) for h in (-0.15, 0.2, 0.5, 0.75)]
+                    out.append(dict(c=c_["c"], origin=(ox, oy), size=size, font=sp_["font"],
+                                    flags=sp_["flags"], color=sp_["color"], bbox=cr, pts=pts,
+                                    angle=math.degrees(math.atan2(-dy, dx))))
     return out
+
+
+def _safe_point(r, boxes, half=0.4):
+    """A small rectangle inside the glyph box `r` that touches none of `boxes` (boxes of slanted
+    letters that must stay). None: `r` touches none of them. False: no such place exists."""
+    hit = [g for g in boxes if g.intersects(r)]
+    if not hit:
+        return None
+    for fy in (0.5, 0.3, 0.7, 0.15, 0.85):
+        for fx in (0.5, 0.25, 0.75, 0.1, 0.9):
+            cx, cy = r.x0 + fx * r.width, r.y0 + fy * r.height
+            q = pymupdf.Rect(cx - half, cy - half, cx + half, cy + half)
+            if not any(g.intersects(q + (-0.2, -0.2, 0.2, 0.2)) for g in hit):
+                return q
+    return False
+
+
+def _lines_hit(rects, guard, margin=0.5):
+    """True if a point of a kept slanted letter lies inside one of the line rectangles."""
+    for r in rects:
+        rr = r + (-margin, -margin, margin, margin)
+        for g in guard:
+            if g["bbox"].intersects(rr) and any(rr.x0 <= x <= rr.x1 and rr.y0 <= y <= rr.y1 for x, y in g["pts"]):
+                return True
+    return False
+
+
+def _solid(units, keeps):
+    """Obstacles for widening a short centred label: what is really in the way. The upright
+    box of slanted text is mostly empty, so translated slanted units count along their
+    baseline only, and slanted text that stays is left to place_near_slanted (it tests the
+    letters themselves)."""
+    out = []
+    for u in units:
+        if not getattr(u, "angle", 0):
+            out.append(list(u.bbox)); continue
+        ox, oy = u.lines[0][0], u.lines[0][4]
+        L = math.hypot(u.bbox[2] - u.bbox[0], u.bbox[3] - u.bbox[1])
+        a = math.radians(u.angle); h = 0.7 * u.size
+        n = max(2, int(L / max(h, 1.0)) + 1)
+        for i in range(n + 1):
+            x, y = ox + math.cos(a) * L * i / n, oy - math.sin(a) * L * i / n
+            out.append([x - h, y - h, x + h, y + h])
+    out += [list(k[:4]) for k in keeps if not str(k[4]).startswith("[rotated]")]
+    return out
+
+
+def place_near_slanted(pg, units, keeps, guard):
+    """Translations must not be printed over slanted text that stays on the page (labels along
+    curves). For every upright unit whose area such a letter enters, look for a placement inside
+    the unit's own box that is clear of those letters: the lines of the original, smaller
+    sizes, centred or flush. If there is none, the unit keeps its source text (reported).
+    Units away from slanted text are not touched."""
+    from .typeset import _wrap
+    report = []
+    if not guard:
+        return report
+    obstacles = [u.bbox for u in units] + [list(k[:4]) for k in keeps]
+    solid = _solid(units, keeps)
+    for u in units:
+        if not u.tgt or u.angle or u.kind != "text":
+            continue
+        fnt = font(u.family, u.bold)
+        s0, ls0, pitch0, box0, ok0 = fit_unit(u, pg.rect, obstacles, solid)
+        area = (pymupdf.Rect(u.bbox) | pymupdf.Rect(box0)) + (-0.5 * u.size, -0.3 * u.size, 0.5 * u.size, 0.3 * u.size)
+        near = [g for g in guard if g["bbox"].intersects(area)]
+        if not near:
+            continue
+        n0 = len(u.lines)
+        chosen = None
+        for scale in (1.0, 0.9, 0.8):
+            s_ = s0 * scale
+            ls = ls0 if scale == 1.0 else _wrap(u.tgt, fnt, s_, box0[2] - box0[0])
+            if not ls or len(ls) > n0:
+                continue                                       # never more lines than the source had
+            pitch = pitch0 * scale
+            starts = [u.lines[i][4] for i in range(0, max(1, n0 - len(ls) + 1))]
+            if u.align == "center" and len(ls) < n0:           # fewer lines than the source: centred first
+                starts = [u.lines[0][4] + (n0 - len(ls)) * pitch / 2] + starts
+            for base0 in starts:
+                if base0 + (len(ls) - 1) * pitch > u.bbox[3] + 0.35 * u.size:
+                    continue
+                for how in ([u.align] + [h for h in ("center", "left", "right") if h != u.align]):
+                    xs = []
+                    for ln in ls:
+                        w = fnt.text_length(ln, fontsize=s_)
+                        x = box0[0] if how == "left" else (box0[2] - w if how == "right" else (box0[0] + box0[2]) / 2 - w / 2)
+                        xs.append((x, w))
+                    rects = [pymupdf.Rect(x, base0 + i * pitch - 0.88 * s_, x + w, base0 + i * pitch + 0.15 * s_)
+                             for i, (x, w) in enumerate(xs)]
+                    if any(r.x0 < min(u.bbox[0], box0[0]) - 0.6 * u.size for r in rects):
+                        continue                               # stay inside the unit's own area
+                    if not _lines_hit(rects, near):
+                        chosen = (s_, ls, pitch, base0, [x for x, _ in xs]); break
+                if chosen: break
+            if chosen: break
+        if chosen:
+            u._place = chosen
+            if chosen[0] < 0.8 * u.size:
+                report.append({"uid": u.uid, "issue": "shrunk", "scale": round(chosen[0] / u.size, 2), "src": u.src[:60]})
+        else:
+            report.append({"uid": u.uid, "issue": "label_left_source", "src": u.src[:60],
+                           "detail": "no room next to text that follows a curve; the source text was kept"})
+            u._kept_src = True; u.tgt = ""; u.kind = "keep"
+    return report
 
 
 def _page_font(pg, name):
@@ -130,7 +246,7 @@ def _restore_slanted(pg, guard):
     return gone
 
 
-def erase_units(pg, units, keeps=(), report=None):
+def erase_units(pg, units, keeps=(), report=None, guard=None):
     textr, vecr, patch = [], [], []
     conflicts = []
     keep_rects = [pymupdf.Rect(k[:4]) for k in keeps]
@@ -162,8 +278,34 @@ def erase_units(pg, units, keeps=(), report=None):
         # and that box is large for a slanted letter: removing "Francisco" also removed the
         # "r" of the curved "San Francisco Bay". Such letters are remembered here and put
         # back after the removal (_restore_slanted).
-        mine = [pymupdf.Rect(e) for u in units if u.tgt for e in u.erase]
-        guard = _slanted_chars(pg, skip=mine)
+        if guard is None:
+            mine = [pymupdf.Rect(e) for u in units if u.tgt for e in u.erase]
+            guard = _slanted_chars(pg, skip=mine)
+        # ...but first try not to remove them at all: where the glyph to erase has a spot that
+        # lies outside the boxes of those letters, a small redaction there removes only it.
+        gboxes = [g["bbox"] for g in guard]
+        if gboxes:
+            glyphs = None                    # upright glyph boxes of the page, read once when needed
+            new = []
+            for item in textr:
+                r = item[0]
+                if item[1] == "pt" or not any(g.intersects(r) for g in gboxes):
+                    new.append(item); continue
+                if glyphs is None:
+                    glyphs = [pymupdf.Rect(c_["bbox"]) for b_ in pg.get_text("rawdict", flags=pymupdf.TEXT_MEDIABOX_CLIP)["blocks"]
+                              for l_ in b_.get("lines", []) if abs(l_["dir"][1]) <= 0.05
+                              for sp_ in l_["spans"] for c_ in sp_["chars"] if c_["c"].strip()]
+                # an erase rectangle can cover a whole word: go glyph by glyph inside it
+                inside = [gl for gl in glyphs if gl.intersects(r) and (gl & r).get_area() > 0.6 * max(gl.get_area(), 0.01)]
+                pts = [_safe_point(gl, gboxes) for gl in inside]
+                if not inside or any(q is False for q in pts):
+                    new.append(item); continue           # no safe spot: remove as before, redraw afterwards
+                for gl, q in zip(inside, pts):
+                    if q is None:
+                        c = (gl.tl + gl.br) / 2
+                        q = pymupdf.Rect(c.x - 0.4, c.y - 0.4, c.x + 0.4, c.y + 0.4)
+                    new.append([q, "pt"])
+            textr[:] = new
 
         def strip(r, f):
             if f == "pt": return r
@@ -278,6 +420,7 @@ def erase_units(pg, units, keeps=(), report=None):
 def draw_units(pg, units, keeps=()):
     report = []
     obstacles = [u.bbox for u in units] + [list(k[:4]) for k in keeps]
+    solid = _solid(units, keeps)
     tws = {}
     rot_tw = []
     for u in units:
@@ -296,8 +439,18 @@ def draw_units(pg, units, keeps=()):
                 report.append({"uid": u.uid, "issue": "overflow" if w > L0 * 1.05 else "shrunk",
                                "scale": round(s_ / u.size, 2), "src": u.src[:60], "angle": round(u.angle, 1)})
             continue
-        s, ls, pitch, box, ok = fit_unit(u, pg.rect, obstacles)
         fnt = font(u.family, u.bold)
+        placed = getattr(u, "_place", None)
+        if placed:                                     # chosen by place_near_slanted
+            s, ls, pitch, base0, xs = placed
+            col = tuple(max(0.0, min(1.0, c)) for c in u.color)
+            tw = tws.setdefault(col, pymupdf.TextWriter(pg.rect, color=col))
+            u._drawn = []
+            for i, ln in enumerate(ls):
+                tw.append((xs[i], base0 + i * pitch), ln, font=fnt, fontsize=s)
+                u._drawn.append((xs[i], ln, base0 + i * pitch, s))
+            continue
+        s, ls, pitch, box, ok = fit_unit(u, pg.rect, obstacles, solid)
         # don't start on top of a kept glyph sitting just left of / under the box start ("|", bullets)
         for k in keeps:
             if (k[0] - 0.5 < box[0] < k[2] + 0.6 * s) and min(box[3], k[3]) - max(box[1], k[1]) > 0.3 * s and k[2] - k[0] < 3 * s:
@@ -310,6 +463,8 @@ def draw_units(pg, units, keeps=()):
         # it usually sits in a row (table header, labels) and must line up with its neighbours
         one_line = len(u.lines) == 1 and len(ls) == 1
         base0 = u.lines[0][4] if (abs(s - u.size) < 0.01 or one_line) else box[1] + fnt.ascender * s * 0.98
+        if u.align == "center" and len(ls) < len(u.lines) and abs(s - u.size) < 0.01:
+            base0 += (len(u.lines) - len(ls)) * pitch / 2       # fewer lines than the source: keep the block centred
         u._drawn = []                                   # (x, text, baseline, size) per drawn line
         for i, ln in enumerate(ls):
             x = box[0]
@@ -435,7 +590,10 @@ def apply_plan(pg, plan):
     rep_d, decos = decor.flag_unhandled(pg, plan.units, decos)
     rep_d += decor.markup_annotations(pg, plan.units) + decor.image_underlines(pg, plan.units)
     restored = []
-    noisy = erase_units(pg, plan.units, plan.keeps, report=restored)
+    mine = [pymupdf.Rect(e) for u in plan.units if u.tgt for e in u.erase]
+    guard = _slanted_chars(pg, skip=mine)              # slanted text that stays on the page
+    skipped += place_near_slanted(pg, plan.units, plan.keeps, guard)
+    noisy = erase_units(pg, plan.units, plan.keeps, report=restored, guard=guard)
     removed = decor.remove(pg, decos)
     not_removed = [d for d in decos if d not in removed]
     rep = skipped + restored + draw_units(pg, [u for u in plan.units if u.kind != "keep"], plan.keeps)

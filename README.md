@@ -28,8 +28,9 @@ and leaves figures, tables, rules and numbers in place.
   <img src="docs/showcase/hero-light.jpg" alt="Three real pages, each split along a diagonal between the English original and the PATT-PDF output in Simplified Chinese" width="100%">
 </picture>
 
-<sub>Real pages, translated with DeepL, unedited. Each page is split along a diagonal between the original and the PATT-PDF output.<br>
-By PATT's own checks the paper and the form pass; the map page does not, because the text inside its images is left in English. <a href="#sample-pages">Sources and licences</a></sub>
+<sub>Real pages, translated with DeepL. Each page is split along a diagonal between the original and the PATT-PDF output.<br>
+By PATT's own checks the paper and the form pass; the map page does not, because the text inside its images is left in English.<br>
+On the map, nine short labels were corrected by hand (<a href="#sample-pages">details, sources and licences</a>).</sub>
 
 </div>
 
@@ -101,7 +102,8 @@ PATT-PDF is experimental. Today it does not do the following:
 
 - **Languages:** English → Simplified Chinese only.
 - **Images:** text inside images stays English (and is reported).
-- **Curved text:** labels that follow a curve, as on maps, stay English.
+- **Curved text:** labels that follow a curve, as on maps, stay English. An upright label with no room next to one keeps its English text too.
+- **Terminology:** without a glossary, short labels can be mistranslated ("Faults" on a map became "malfunctions").
 - **Styles:** italics and link colours inside a paragraph are lost.
 - **Tables and formulas:** table cells are translated in place but not re-flowed; formulas can break.
 - **Interface:** command line only.
@@ -134,7 +136,7 @@ The pictures are made with `tools/diagonal_compare.py` from these documents; the
 - Coyle et al., [PLOS ONE 17(1): e0262897](https://doi.org/10.1371/journal.pone.0262897), CC BY 4.0.
 - U.S. Geological Survey Fact Sheet 2016–3020; NIST CSWP 29; IRS Form W-9: works of the U.S. government.
 
-The Chinese text in the pictures is machine translation produced by this tool. It is a modified version of the originals and is not endorsed by their authors.
+The Chinese text in the pictures is machine translation (DeepL) placed by this tool. It is a modified version of the originals and is not endorsed by their authors. Five of the six pages are shown as translated. On the map page nine short labels were corrected by hand, as you would with a glossary: the legend title "Faults" (DeepL: 故障, "malfunctions"; shown: 断层), the fault names Mission and Butano, and six place names set in two lines, such as San Francisco, which earlier versions translated line by line. Six legend entries that DeepL had received in pairs were split without changing its words.
 
 ## License
 

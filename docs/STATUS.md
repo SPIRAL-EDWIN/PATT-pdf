@@ -1,4 +1,4 @@
-# Status of v0.4.3.dev0 (2026-11-13)
+# Status of v0.4.4.dev0 (2026-11-14)
 
 PATT-PDF is **experimental**: a development pre-release, usable from the command line on macOS and Linux, with known limits. This page says what has actually been run, where, and what has not. The sections below the summary are the working record, newest first; they are detailed on purpose.
 
@@ -6,8 +6,8 @@ PATT-PDF is **experimental**: a development pre-release, usable from the command
 
 | Area | State |
 |---|---|
-| **Linux** (aarch64 container, CPython 3.10.12) | full suite 482 passed / 3 skipped; with Tesseract hidden 477 / 8. Bash 5.1 and a source-built bash 3.2.57; ShellCheck 0.10.0 clean |
-| **macOS** (one Apple Silicon Mac, macOS 27.2.1, system bash 3.2.57, CPython 3.12.16) | three check rounds on the code of this version (§0-R2 to §0-R5): 482 passed / 1 skipped; `run`, `--pages`, progress, parallel planning, interrupt and resume, Preview checks, the installer in five locales |
+| **Linux** (aarch64 container, CPython 3.10.12) | full suite 494 passed / 3 skipped; with Tesseract hidden 489 / 8. Bash 5.1 and a source-built bash 3.2.57; ShellCheck 0.10.0 clean |
+| **macOS** (one Apple Silicon Mac, macOS 27.2.1, system bash 3.2.57, CPython 3.12.16) | four check rounds (§0-R2 to §0-R6). The last one, on `d7be60a`: 482 passed / 3 skipped, installer and offline workflow passed, two findings on the map page. **The fixes for those findings (this version) have not been run on macOS.** Checked earlier: `run`, `--pages`, progress, parallel planning, interrupt and resume, Preview checks, the installer in five locales |
 | **Installer** | from a local checkout on Linux and macOS, with pip and with uv, mirror and official sources. **Homebrew path run once on that Mac** (§0-R5): fonts installed, then skipped when present; Homebrew downloads came from the mirror |
 | **Real documents** | seven public documents, 14 pages, with DeepL on Linux: 2 pass, 5 review, 7 fail (§0-Q). Layout regressions on the same documents without a translation service: 16 tests, Linux and macOS |
 | **GitHub Actions** | last run on `c6c9ed5`: Linux 4/4, macOS 3/3. **No run yet for any later commit**, including this version; two steps are new (real documents, macOS system bash) |
@@ -15,9 +15,27 @@ PATT-PDF is **experimental**: a development pre-release, usable from the command
 
 **Not verified:** Intel Macs; a Mac without Homebrew (the installer would install Homebrew after asking); Fedora, Arch and openSUSE packages; Python 3.11 and 3.13 for this version; a download of a Tesseract bottle through the mirror (it was already installed); scanned pages and the OCR path on real documents; long documents end to end; any language pair other than English → Simplified Chinese.
 
-**What changed in 0.4.3 compared with the code checked on macOS (`a92eba7`, 0.4.2.dev0):** documentation, images and repository files (README, this page, CHANGELOG, CONTRIBUTING, SECURITY, issue forms); one more line of installer output (that Homebrew may update itself) and tests that run the installer's Homebrew branch with a stand-in `brew`; the showcase tool can swap the two sides and draws its labels outside the page. No change to the translation engine.
+**What changed in 0.4.4 compared with the code checked on macOS (`d7be60a`, 0.4.3.dev0):** the layout engine (`patt-0.4-e3`, §0-R6): labels next to text that follows a curve, place names set in two centred lines, numbered legends; the showcase images; documentation. The installer is unchanged.
 
 **Scope.** macOS and Linux are maintained here. Windows development and native testing are done by a Windows collaborator; the Windows code paths, tests and retest prompt stay in the repository, and the default CI matrix does not run Windows jobs.
+
+## 0-R6. macOS check of d7be60a (v0.4.3.dev0): not pushed; two findings on the map page (2026-11-14)
+
+**Run (Codex, the user's Mac, commit `d7be60a`).** F1–F4, F7 and F9 passed (full suite 482 passed / 3 skipped; both installer paths; offline two-file run; public-content scan). **F5 and F8 failed, so nothing was pushed**; the public `main` is still `703efcd`. Report private.
+
+| Finding | Cause | Change in 0.4.4 (engine `patt-0.4-e3`) | Test |
+|---|---|---|---|
+| **F5.** USGS map page, `pseudo` run: the curved blue "San Francisco Bay" showed a gap at its "r"; the text layer had it as "San F" / "ancisco Bay" plus a separate "r" | the upright city label "Francisco" crosses that letter. MuPDF removes a glyph when a redaction touches its upright bounding box, so the "r" was removed with the label and redrawn afterwards (0.4.1), in a substitute face and as a separate run | a glyph that must be erased is hit with a small redaction at a spot outside the boxes of slanted letters that stay, glyph by glyph; the slanted letter is never removed. Redrawing remains only as a fallback when no such spot exists | synthetic label beside a curve; the real-document test requires "San Francisco Bay" to be one span with its original font |
+| **F8.** Showcase images: the black "弗朗西斯科" was printed across the blue curved label | a translation was placed without regard to slanted text that stays on the page | before drawing, a unit that such letters enter is tried at the positions of its source lines, at smaller sizes and other alignments inside its own box; never on more lines than the source. If nothing is clear, the unit keeps its source text (`label_left_source`, review) | synthetic crossing label (kept), label beside a curve (translated), long translation next to a curve; real-document test: no Chinese text on any kept slanted letter |
+| **F8.** Legend title "Faults" shown as "故障" | DeepL's choice for a single word without context; not a layout defect | not fixed in the engine (no glossary or context is sent). Listed under Limits in the README. The showcase uses a hand-corrected term and says so | |
+| Found while fixing: "San" / "Francisco", "Santa" / "Rosa" were separate units (DeepL returned "圣诞老人", Father Christmas, for "Santa") | each line of a label set in two centred lines was its own unit; the table logic also marked such lines as cells of a row | two or three short centred lines with almost no leading are one unit, centred; a translation that fits is set on one line | 2 + 4 tests; one-line placement and neighbour tests |
+| Found while fixing: in the numbered fault list, "13 Pittsburg-Kirby Hills" and "14 Clayton" were one unit | a line that ran to the column edge was joined with the next | a bare number directly left of a line (within 0.9 em) starts a list item; a number further away does not | test with a list and a caption next to a map marker |
+
+**Effect on other documents.** Thirteen pages of the seven real documents were rendered with the previous and the new engine and the same placeholder text: eleven are pixel-identical; the two that differ are the two map pages of the USGS fact sheet. Across 65 planned pages only map labels, the legend pairs and three two-line table cells of one paper ("Coin Flip: 4" / "(OOD)") changed.
+
+**Showcase images.** Re-made with the new engine. Five of the six pages show the DeepL output as it is. On the map page nine short labels were set by hand (the legend title, two fault names, and six place names that are now single units and had no DeepL translation as such), and six legend entries that DeepL had received in pairs were split without changing its words; the README says so. No translation request was made for this: the earlier DeepL answers were reused.
+
+**Not verified:** this version on macOS.
 
 ## 0-R5. macOS: the installer's Homebrew path, run for real (2026-11-13)
 

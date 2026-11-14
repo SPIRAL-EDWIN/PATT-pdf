@@ -68,6 +68,8 @@ ISSUE_STATUS = {
     "translation_left_source": REVIEW,
     # text set along a curve (map labels) is not translated
     "curved_text_left_english": REVIEW,
+    # an upright label with no room next to such text keeps its source text
+    "label_left_source": REVIEW,
 }
 # informational (no status): "translation_repaired" — an unusable translation was repaired
 
@@ -823,7 +825,8 @@ def render_file(ws: Workspace, rel: str, ns: str, publishable: bool = True, ocr_
                 pq["keep_changed"] = keep_integrity(src, out_path, plan.page, plan)
                 if pq["keep_changed"]:
                     pq["issues"].append({"issue": "keep_changed", "detail": pq["keep_changed"][:5]})
-                tg = [u.tgt for u in plan.units if u.tgt] + [u.src for u in plan.units if u.uid in left]
+                tg = [u.tgt for u in plan.units if u.tgt] + [u.src for u in plan.units
+                                                              if u.uid in left or getattr(u, "_kept_src", False)]
                 with pymupdf.open(out_path) as o:
                     if plan.kind == "text":
                         pq["residual_en"] = residual_english(o[plan.page], plan, tg)
